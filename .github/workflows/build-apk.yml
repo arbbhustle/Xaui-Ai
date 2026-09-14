@@ -1,1 +1,94 @@
+name: Build Android APK
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find ZIP
+        run: |
+          ZIP=$(find . -maxdepth 2 -type f -name "*.zip" | head -1)
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: ZIP not found"
+            exit 1
+          fi
+          echo "ZIP_PATH=$ZIP" >> $GITHUB_ENV
+
+      - name: Unzip project
+        run: |
+          mkdir -p project
+          unzip -o "$ZIP_PATH" -d project
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Find Android project
+        run: |
+          GRADLEW=$(find project -type f -name gradlew | head -1)
+
+          if [ -n "$GRADLEW" ]; then
+            PROJECT_DIR=$(dirname "$GRADLEW")
+            chmod +x "$GRADLEW"
+          else
+            SETTINGS=$(find project -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -1)
+
+            if [ -z "$SETTINGS" ]; then
+              echo "ERROR: Android project not found"
+              exit 1
+            fi
+
+            PROJECT_DIR=$(dirname "$SETTINGS")
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Enable AndroidX
+        run: |
+          cd "$PROJECT_DIR"
+          touch gradle.properties
+          echo "android.useAndroidX=true" >> gradle.properties
+          echo "android.enableJetifier=true" >> gradle.properties
+
+      - name: Build APK
+        run: |
+          cd "$PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug
+          else
+            gradle assembleDebug
+          fi
+
+      - name: Find APK
+        run: |
+          APK=$(find "$PROJECT_DIR" -type f -name "*.apk" | head -1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK not found"
+            exit 1
+          fi
+
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: XAU-AI-Trader-APK
+          path: ${{ env.APK_PATH }}
