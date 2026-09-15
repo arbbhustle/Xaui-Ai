@@ -14,14 +14,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Find ZIP
+      - name: Select AURUM CORE ZIP
         run: |
-          ZIP=$(find . -maxdepth 2 -type f -name "*.zip" | head -1)
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: ZIP not found"
+          ZIP="XAU_AI_Trader_Android_AURUM_CORE_v2.zip"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "ERROR: $ZIP not found"
             exit 1
           fi
+
           echo "ZIP_PATH=$ZIP" >> $GITHUB_ENV
+          echo "Using $ZIP"
+    
 
       - name: Unzip project
         run: |
