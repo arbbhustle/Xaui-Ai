@@ -72,14 +72,22 @@ def normalize_envelope(channel, raw, retrieved_at, provider):
         base["error"] = raw.get("error") if raw.get("error") in (
             "PROVIDER_FAILED", "INVALID_OR_MISSING_PROVIDER_DATA") else "PROVIDER_UNAVAILABLE"
         return base
-    if raw.get("status") != "OK" or raw.get("data_mode") not in ("LIVE", "DELAYED", "FIXTURE"):
+    if raw.get("status") != "OK" or raw.get("data_mode") not in ("LIVE", "DELAYED", "FIXTURE", "TEST_DATA"):
         raise ValueError("Missing provenance mode")
+    if "is_synthetic" in raw and type(raw["is_synthetic"]) is not bool:
+        raise ValueError("Invalid synthetic marker")
     records = raw["records"]
     if not isinstance(records, list) or len(records) > 1000:
         raise ValueError("Invalid record count")
     base.update(status="OK", data_mode=raw["data_mode"], as_of=timestamp(raw["as_of"]))
+    if raw["data_mode"] == "TEST_DATA" or raw.get("is_synthetic") is True:
+        base["data_mode"] = "FIXTURE"
     for row in records:
-        if row.get("data_mode") == "FIXTURE" or row.get("is_synthetic") is True:
+        if "is_synthetic" in row and type(row["is_synthetic"]) is not bool:
+            raise ValueError("Invalid synthetic marker")
+        if "data_mode" in row and row["data_mode"] not in ("LIVE", "DELAYED", "FIXTURE", "TEST_DATA"):
+            raise ValueError("Invalid record provenance")
+        if row.get("data_mode") in ("FIXTURE", "TEST_DATA") or row.get("is_synthetic") is True:
             base["data_mode"] = "FIXTURE"
         elif row.get("data_mode") == "DELAYED" and base["data_mode"] == "LIVE":
             base["data_mode"] = "DELAYED"
@@ -147,6 +155,7 @@ def normalize_bundle(bundle, now):
 
 
 class IntelligenceFeed:
+    channels = CHANNELS
     def __init__(self, providers=None, clock=lambda: datetime.now(timezone.utc), timeout_seconds=2):
         if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 10:
             raise ValueError("Invalid provider acquisition budget")
@@ -161,9 +170,9 @@ class IntelligenceFeed:
         try:
             name = text(provider.name)
             raw = provider.fetch(now)
-            if raw.get("status") == "OK" and getattr(provider, "data_mode", None) not in ("LIVE", "DELAYED", "FIXTURE"):
+            if raw.get("status") == "OK" and getattr(provider, "data_mode", None) not in ("LIVE", "DELAYED", "FIXTURE", "TEST_DATA"):
                 raise ValueError("Unregistered provider provenance")
-            if getattr(provider, "data_mode", None) == "FIXTURE":
+            if getattr(provider, "data_mode", None) in ("FIXTURE", "TEST_DATA"):
                 raw = dict(raw, data_mode="FIXTURE")
             elif getattr(provider, "data_mode", None) == "DELAYED" and raw.get("data_mode") == "LIVE":
                 raw = dict(raw, data_mode="DELAYED")
@@ -178,14 +187,14 @@ class IntelligenceFeed:
         # the minute monitor indefinitely or accumulate threads on every tick.
         with self._lock:
             deadline = time.monotonic() + self.timeout_seconds
-            for channel in CHANNELS:
+            for channel in self.channels:
                 if channel not in self._inflight:
                     done, box = threading.Event(), []
                     self._inflight[channel] = (done, box)
                     threading.Thread(target=self._read, args=(channel, self.providers.get(channel, UnavailableProvider()), now, done, box),
                                      daemon=True, name="intelligence-" + channel).start()
             result = {}
-            for channel in CHANNELS:
+            for channel in self.channels:
                 done, box = self._inflight[channel]
                 if done.wait(max(0, deadline - time.monotonic())) and box:
                     result[channel] = box[0]
@@ -202,7 +211,19 @@ class IntelligenceMarketFeed:
 
     def fetch(self, now):
         frames, errors = self.market_feed.fetch(now)
+        declared = getattr(self.market_feed, "data_mode", "UNAVAILABLE")
+        supplied = frames.get(MARKET_KEY, {})
+        supplied = supplied if isinstance(supplied, dict) else {"data_mode": "UNAVAILABLE"}
+        mode = declared
+        if declared in ("FIXTURE", "TEST_DATA") or supplied.get("data_mode") in ("FIXTURE", "TEST_DATA") or supplied.get("is_synthetic") is True:
+            mode = "FIXTURE"
+        elif declared not in ("LIVE", "DELAYED") or ("data_mode" in supplied and supplied["data_mode"] not in ("LIVE", "DELAYED")):
+            mode = "UNAVAILABLE"
+        elif supplied.get("data_mode") == "DELAYED":
+            mode = "DELAYED"
+        if "is_synthetic" in supplied and type(supplied["is_synthetic"]) is not bool:
+            mode = "UNAVAILABLE"
         market = {"provider": getattr(self.market_feed, "name", "unidentified-provider"),
-                  "data_mode": getattr(self.market_feed, "data_mode", "UNAVAILABLE"),
+                  "data_mode": mode,
                   "retrieved_at": stamp(self.intelligence_feed.clock())}
         return dict(frames, **{MARKET_KEY: market, BUNDLE_KEY: self.intelligence_feed.fetch(now)}), errors

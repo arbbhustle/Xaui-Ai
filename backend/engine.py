@@ -65,6 +65,10 @@ class Engine:
     def monitor_gates(self, trade, snapshot):
         return []
 
+    def after_tick(self, conn, snapshot, result, now, snapshot_id):
+        """Optional isolated journals within the same transaction."""
+        return None
+
     def tick(self, frames: dict, now, source_errors=None):
         snapshot = {
             "observed_at": stamp(now), "frames": safe_input(frames),
@@ -116,6 +120,7 @@ class Engine:
             latest = conn.execute("SELECT candle_close FROM decisions ORDER BY candle_close DESC LIMIT 1").fetchone()
             if close and not existing and (not latest or close > latest[0]):
                 result = self._decision(conn, result, now, snapshot_id)
+            self.after_tick(conn, snapshot, result, now, snapshot_id)
             health = {
                 "observed_at": stamp(now), "snapshot_id": snapshot_id,
                 "data_errors": sorted(set(problems + monitor_problems +

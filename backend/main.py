@@ -170,11 +170,13 @@ def create_app(db_path=None, policy=None, feed=None, start_worker=True,
 
     @app.get("/strategy")
     def strategy():
-        phase2 = strategy_version.startswith(("phase2-", "phase3a-"))
+        phase2 = strategy_version.startswith(("phase2-", "phase3a-", "phase3b-"))
         return {"version": strategy_version, "mode": "DEMO_ONLY",
                 "confidence_kind": "EMPIRICAL_DEMO_BETA_BIN_OR_UNCALIBRATED_WARMUP" if phase2 else "UNCALIBRATED_SCORE",
                 "code_hash": app.state.engine.code_hash,
-                "note": "Technical council plus source-stamped macro/news intelligence; unavailable providers block entries."
+                "note": "Gold hidden-state risk filters, source-stamped macro/news, background slow regimes and isolated DEMO shadows."
+                        if strategy_version.startswith("phase3b-") else
+                        "Technical council plus source-stamped macro/news intelligence; unavailable providers block entries."
                         if strategy_version.startswith("phase3a-") else
                         "Technical council with historical demo calibration; 4H bias is price-derived, not macro news."
                         if phase2 else "Original 5m scores plus closed-candle confirmation and risk vetoes."}

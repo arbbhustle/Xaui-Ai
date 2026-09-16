@@ -30,7 +30,10 @@ def main():
         if not row:
             parser.error("Decision does not exist")
         version = json.loads(row[0]).get("strategy_version", "")
-        if version.startswith("phase3a-"):
+        if version.startswith("phase3b-"):
+            from .phase3b import Phase3BEngine
+            engine = Phase3BEngine(store)
+        elif version.startswith("phase3a-"):
             from .phase3a import Phase3AEngine
             engine = Phase3AEngine(store)
         elif version.startswith("phase2-"):

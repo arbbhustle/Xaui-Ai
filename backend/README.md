@@ -2,6 +2,7 @@
 
 The parallel, local-only Phase 2 council is documented in [PHASE2.md](PHASE2.md).
 The separate Phase 3A macro/news layer is documented in [PHASE3A.md](PHASE3A.md).
+The separate Phase 3B gold hidden-state layer is documented in [PHASE3B.md](PHASE3B.md).
 `backend.main:app` remains the Phase 1 entry point; `backend.phase2_main:app` uses
 a separate demo database. No deployment or Android URL change is included.
 

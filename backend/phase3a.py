@@ -113,7 +113,10 @@ class Phase3AEngine(Phase2Engine):
             Store.set_state(conn, "phase3a_input_category", category)
             bound = category
         snapshot["provenance_vetoes"] = ["INPUT_MODE_DATABASE_MISMATCH"] if bound and bound != category and market["data_mode"] != "UNAVAILABLE" else []
-        snapshot["model_identity"] = digest({"model": self.model_identity, "input_modes": modes})
+        identity = {"model": self.model_identity, "input_modes": modes}
+        if "model_namespace_extra" in snapshot:
+            identity["extra"] = snapshot["model_namespace_extra"]
+        snapshot["model_identity"] = digest(identity)
         return super().snapshot_context(conn, snapshot, checked)
 
     def evaluate_snapshot(self, snapshot, policy):
