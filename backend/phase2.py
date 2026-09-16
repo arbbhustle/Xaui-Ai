@@ -37,12 +37,12 @@ class Phase2Engine(Engine):
         with store.connect() as conn:
             mixed = conn.execute("""SELECT 1 FROM decisions
                 WHERE coalesce(json_extract(payload, '$.strategy_version'), '') != ? LIMIT 1""",
-                                 (VERSION,)).fetchone()
+                                 (self.strategy_version,)).fetchone()
         if mixed:
-            raise RuntimeError("Phase 2 requires a separate demo database; Phase 1 history is preserved")
+            raise RuntimeError(f"{self.strategy_version} requires a separate demo database; existing history is preserved")
 
     def snapshot_context(self, conn, snapshot, checked):
-        context = {"council_policy": asdict(self.council_policy), "model_identity": self.model_identity,
+        context = {"council_policy": asdict(self.council_policy), "model_identity": snapshot.get("model_identity", self.model_identity),
                    "calibration_samples": []}
         if not checked["5min"]:
             return context
@@ -70,7 +70,7 @@ class Phase2Engine(Engine):
               AND s.observed_at <= ?
               AND json_extract(e.payload, '$.closed_at') <= ?
             ORDER BY json_extract(e.payload, '$.closed_at') DESC, t.id DESC LIMIT ?
-            """, (self.model_identity, direction, lower, upper, stamp(cutoff), stamp(cutoff),
+            """, (context["model_identity"], direction, lower, upper, stamp(cutoff), stamp(cutoff),
                   self.council_policy.calibration_window)).fetchall()
         context["calibration_samples"] = [
             {"trade_id": row["id"], "direction": decision["candidate_direction"],

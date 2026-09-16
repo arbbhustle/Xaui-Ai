@@ -84,7 +84,7 @@ def features(candles, settings):
     }
 
 
-def evaluate_council(snapshot, policy: Policy):
+def evaluate_council(snapshot, policy: Policy, score_overlay=None):
     settings = CouncilPolicy(**snapshot["council_policy"])
     now = parse(snapshot["observed_at"])
     frames, errors = inspect_frames(snapshot, policy)
@@ -150,6 +150,8 @@ def evaluate_council(snapshot, policy: Policy):
         result["components"][name] = {"buy": round(buy, 4), "sell": round(sell, 4), "weight": weight}
     for side in ("buy", "sell"):
         result[f"{side}_score"] = round(sum(c[side] * c["weight"] for c in result["components"].values()), 4)
+    if score_overlay is not None:
+        result.update(score_overlay(result))
     buy, sell = result["buy_score"], result["sell_score"]
     result["edge"] = round(abs(buy - sell), 4)
     result["raw_score"] = max(buy, sell)

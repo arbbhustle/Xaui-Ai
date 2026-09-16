@@ -16,7 +16,7 @@ log = logging.getLogger("dardania.engine")
 def execution_gates(result, context, policy, now):
     episode = dict(context["episode"])
     direction = result["candidate_direction"]
-    if result["data_status"] == "LIVE_DATA" and direction != episode["direction"]:
+    if result["data_status"] in ("LIVE_DATA", "FIXTURE_DATA", "DELAYED_DATA") and direction != episode["direction"]:
         episode = {"direction": direction, "used": False}
     gates = []
     if context["active_trade_id"]:
@@ -56,6 +56,15 @@ class Engine:
     def trade_metadata(self, result):
         return {}
 
+    def api_health(self, conn, health, now):
+        return health
+
+    def api_decision(self, conn, result, now):
+        return result
+
+    def monitor_gates(self, trade, snapshot):
+        return []
+
     def tick(self, frames: dict, now, source_errors=None):
         snapshot = {
             "observed_at": stamp(now), "frames": safe_input(frames),
@@ -91,6 +100,8 @@ class Engine:
                     monitor_problems = ["INVALID_DATA:1min"]
             if "1min" in (source_errors or {}):
                 monitor_problems.append("PROVIDER_ERROR:1min")
+            if trade:
+                monitor_problems.extend(self.monitor_gates(trade, snapshot))
             pre_entry_veto = (trade and trade["status"] == "PENDING"
                               and now < parse(trade["eligible_from"])
                               and result["veto_codes"])
@@ -122,6 +133,9 @@ class Engine:
                             "decision_id": result.get("decision_id"), "veto_codes": result["veto_codes"]}))
         return result
 
+    def seal_decision(self, result):
+        return result
+
     def _decision(self, conn, result, now, snapshot_id):
         result = dict(result)
         context = {
@@ -140,6 +154,7 @@ class Engine:
         result["snapshot_id"] = snapshot_id
         result["execution_context"] = context
         result["execution_veto_codes"] = gates
+        result = self.seal_decision(result)
         conn.execute("INSERT INTO decisions VALUES (?,?,?,?)",
                      (result["decision_id"], result["signal_candle_close"], snapshot_id, canonical(result)))
         if result["direction"] in ("BUY", "SELL"):

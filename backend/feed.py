@@ -7,6 +7,9 @@ from .domain import INTERVALS, parse, stamp
 
 
 class TwelveDataFeed:
+    name = "Twelve Data"
+    data_mode = "LIVE"
+
     def __init__(self, api_key: str):
         self.api_key = api_key.strip()
         self.cache = {}

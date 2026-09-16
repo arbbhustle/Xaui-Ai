@@ -29,7 +29,11 @@ def main():
             row = conn.execute("SELECT payload FROM decisions WHERE id=?", (args.decision_id,)).fetchone()
         if not row:
             parser.error("Decision does not exist")
-        if json.loads(row[0]).get("strategy_version", "").startswith("phase2-"):
+        version = json.loads(row[0]).get("strategy_version", "")
+        if version.startswith("phase3a-"):
+            from .phase3a import Phase3AEngine
+            engine = Phase3AEngine(store)
+        elif version.startswith("phase2-"):
             from .phase2 import Phase2Engine
             engine = Phase2Engine(store)
         else:

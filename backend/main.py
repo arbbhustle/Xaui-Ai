@@ -74,8 +74,9 @@ def create_app(db_path=None, policy=None, feed=None, start_worker=True,
         at = health.get("observed_at")
         if not at or not 0 <= (now - parse(at)).total_seconds() <= policy.heartbeat_limit_seconds:
             errors.append("MONITOR_STALE")
-        return dict(health, status="STALE" if errors else health["status"],
-                    data_errors=sorted(set(errors)), served_at=stamp(now))
+        result = dict(health, status="STALE" if errors else health["status"],
+                      data_errors=sorted(set(errors)), served_at=stamp(now))
+        return app.state.engine.api_health(conn, result, now)
 
     @app.get("/")
     def root():
@@ -122,6 +123,7 @@ def create_app(db_path=None, policy=None, feed=None, start_worker=True,
                 result["data_status"] = health["status"]
             elif decision_errors:
                 result["data_status"] = "STALE"
+            result = app.state.engine.api_decision(conn, result, now)
             result["performance"] = Store.summary(conn)
             result["demo_trade"] = result["performance"]["open_trade"]
             result["health"] = health
@@ -168,11 +170,13 @@ def create_app(db_path=None, policy=None, feed=None, start_worker=True,
 
     @app.get("/strategy")
     def strategy():
-        phase2 = strategy_version.startswith("phase2-")
+        phase2 = strategy_version.startswith(("phase2-", "phase3a-"))
         return {"version": strategy_version, "mode": "DEMO_ONLY",
                 "confidence_kind": "EMPIRICAL_DEMO_BETA_BIN_OR_UNCALIBRATED_WARMUP" if phase2 else "UNCALIBRATED_SCORE",
                 "code_hash": app.state.engine.code_hash,
-                "note": "Technical council with historical demo calibration; 4H bias is price-derived, not macro news."
+                "note": "Technical council plus source-stamped macro/news intelligence; unavailable providers block entries."
+                        if strategy_version.startswith("phase3a-") else
+                        "Technical council with historical demo calibration; 4H bias is price-derived, not macro news."
                         if phase2 else "Original 5m scores plus closed-candle confirmation and risk vetoes."}
 
     # No reset endpoint or public custom-candle mutation endpoint.

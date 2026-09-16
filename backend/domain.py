@@ -109,12 +109,14 @@ def closed_frame(rows: list[dict], interval: str, now: datetime,
         if not isinstance(rows, list):
             raise ValueError("Invalid frame")
         for row in rows:
-            candle = Candle(**row)
-            opened = parse(candle.t)
-            if opened.second or opened.microsecond:
+            opened = parse(row["t"])
+            if opened.microsecond or int(opened.timestamp()) % seconds:
                 raise ValueError("Unaligned candle")
             if opened > now:
                 raise ValueError("Future candle")
+            if opened + timedelta(seconds=seconds) > now:
+                continue
+            candle = Candle(**row)
             if opened in seen:
                 raise ValueError("Duplicate candle")
             seen.add(opened)
