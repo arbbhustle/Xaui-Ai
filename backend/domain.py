@@ -238,5 +238,7 @@ def apply_veto(result: dict, codes: list[str]) -> dict:
     result["risk_veto"] = bool(result["veto_codes"])
     if result["risk_veto"]:
         result.update(direction="NO_TRADE", action="WAIT", sl=None, tp1=None, tp2=None)
+        if "warmup_trade" in result:
+            result["warmup_trade"] = False
         result["reasons"] = list(result.get("reasons", [])) + ["Risk veto: " + c for c in codes]
     return result

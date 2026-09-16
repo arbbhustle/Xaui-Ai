@@ -1,4 +1,4 @@
-name: Phase 1 backend tests
+name: Phase 1 and Phase 2 backend tests
 
 on:
   workflow_dispatch:

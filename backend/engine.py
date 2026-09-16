@@ -38,27 +38,42 @@ def implementation_hash(root=None):
 
 
 class Engine:
+    strategy_version = VERSION
+    replay_fields = ("direction", "candidate_direction", "buy_score", "sell_score", "confidence",
+                     "entry", "sl", "tp1", "tp2", "timeframes", "veto_codes")
+
     def __init__(self, store: Store, policy: Policy = Policy()):
         self.store, self.policy = store, policy
         self.code_hash = implementation_hash()
+
+    def snapshot_context(self, conn, snapshot, checked):
+        """Capture any strategy-specific inputs inside the tick transaction."""
+        return {}
+
+    def evaluate_snapshot(self, snapshot, policy):
+        return evaluate(snapshot, policy)
+
+    def trade_metadata(self, result):
+        return {}
 
     def tick(self, frames: dict, now, source_errors=None):
         snapshot = {
             "observed_at": stamp(now), "frames": safe_input(frames),
             "source_errors": source_errors or {}, "policy": asdict(self.policy),
-            "strategy_version": VERSION, "code_hash": self.code_hash,
+            "strategy_version": self.strategy_version, "code_hash": self.code_hash,
         }
         checked, problems = inspect_frames(snapshot, self.policy)
-        snapshot_id = digest(snapshot)
-        result = evaluate(snapshot, self.policy)
-        if source_errors:
-            result = apply_veto(result, ["PROVIDER_ERROR:" + k for k in sorted(source_errors)])
-            result["data_status"] = "ERROR"
         # A transaction serializes overlapping ticks and ensures restart-safe deduplication.
         with self.store.transaction() as conn:
             previous = Store.get_state(conn, "health", {})
             if previous.get("observed_at") and parse(previous["observed_at"]) >= now:
                 return None
+            snapshot.update(self.snapshot_context(conn, snapshot, checked))
+            snapshot_id = digest(snapshot)
+            result = self.evaluate_snapshot(snapshot, self.policy)
+            if source_errors:
+                result = apply_veto(result, ["PROVIDER_ERROR:" + k for k in sorted(source_errors)])
+                result["data_status"] = "ERROR"
             conn.execute("INSERT OR IGNORE INTO snapshots VALUES (?,?,?)",
                          (snapshot_id, stamp(now), canonical(snapshot)))
             monitor_problems = []
@@ -144,6 +159,7 @@ class Engine:
                 "sell_score": result["sell_score"], "mode": result["mode"],
                 "engine": result["engine"], "reasons": result["reasons"],
                 "fill_model": "NEXT_FULL_1M_OPEN_GROSS_NO_COSTS", "ambiguity": False,
+                **self.trade_metadata(result),
             }
             conn.execute("INSERT INTO trades VALUES (?,?,?,?)",
                          (trade["id"], result["decision_id"], "PENDING", canonical(trade)))
@@ -245,14 +261,13 @@ class Engine:
         if digest(snapshot) != stored["snapshot_id"]:
             raise ValueError("Snapshot checksum mismatch")
         policy = Policy(**snapshot["policy"])
-        replayed = evaluate(snapshot, policy)
+        replayed = self.evaluate_snapshot(snapshot, policy)
         replayed = apply_veto(replayed, ["PROVIDER_ERROR:" + k for k in sorted(snapshot["source_errors"])])
         if snapshot["source_errors"]:
             replayed["data_status"] = "ERROR"
         replayed = apply_veto(replayed, stored.get("monitor_veto_codes", []))
         gates, _ = execution_gates(replayed, stored["execution_context"], policy, parse(snapshot["observed_at"]))
         replayed = apply_veto(replayed, gates)
-        keys = ("direction", "candidate_direction", "buy_score", "sell_score", "confidence",
-                "entry", "sl", "tp1", "tp2", "timeframes", "veto_codes")
+        keys = self.replay_fields
         return {"decision_id": decision_id, "matches": all(stored[k] == replayed[k] for k in keys),
                 "replayed": {k: replayed[k] for k in keys}}

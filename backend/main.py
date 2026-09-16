@@ -7,10 +7,10 @@ import logging
 import os
 import sys
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
-from .domain import Policy, VERSION, apply_veto, parse, stamp, freshness_errors
+from .domain import Policy, apply_veto, parse, stamp, freshness_errors
 from .engine import Engine
 from .feed import TwelveDataFeed
 from .storage import Store
@@ -28,14 +28,14 @@ def database_path():
 
 
 def create_app(db_path=None, policy=None, feed=None, start_worker=True,
-               clock=lambda: datetime.now(timezone.utc)):
+               clock=lambda: datetime.now(timezone.utc), engine_factory=Engine):
     # Database and worker start during lifespan, not at module import.
     policy = policy or Policy(kill_switch=os.environ.get("DEMO_KILL_SWITCH", "false").lower() == "true")
 
     @asynccontextmanager
     async def lifespan(app):
         store = Store(db_path if db_path is not None else database_path())
-        engine = Engine(store, policy)
+        engine = engine_factory(store, policy)
         monitor = Monitor(engine, feed or TwelveDataFeed(os.environ.get("TWELVE_DATA_API_KEY", "")), clock)
         app.state.store, app.state.engine = store, engine
         logger = logging.getLogger("dardania")
@@ -62,7 +62,9 @@ def create_app(db_path=None, policy=None, feed=None, start_worker=True,
             logger.setLevel(previous_level)
             logger.propagate = previous_propagate
 
-    app = FastAPI(title="DardaniaXAUTRADE AI — Phase 1 Demo", version=VERSION, lifespan=lifespan)
+    strategy_version = engine_factory.strategy_version
+    app = FastAPI(title=f"DardaniaXAUTRADE AI — {strategy_version} Demo",
+                  version=strategy_version, lifespan=lifespan)
 
     def read_health(conn, now=None):
         now = now or clock()
@@ -77,7 +79,7 @@ def create_app(db_path=None, policy=None, feed=None, start_worker=True,
 
     @app.get("/")
     def root():
-        return {"name": app.title, "version": VERSION, "mode": "DEMO_ONLY", "signal_endpoint": "/signal"}
+        return {"name": app.title, "version": strategy_version, "mode": "DEMO_ONLY", "signal_endpoint": "/signal"}
 
     @app.get("/health")
     def health():
@@ -166,9 +168,12 @@ def create_app(db_path=None, policy=None, feed=None, start_worker=True,
 
     @app.get("/strategy")
     def strategy():
-        return {"version": VERSION, "mode": "DEMO_ONLY", "confidence_kind": "UNCALIBRATED_SCORE",
+        phase2 = strategy_version.startswith("phase2-")
+        return {"version": strategy_version, "mode": "DEMO_ONLY",
+                "confidence_kind": "EMPIRICAL_DEMO_BETA_BIN_OR_UNCALIBRATED_WARMUP" if phase2 else "UNCALIBRATED_SCORE",
                 "code_hash": app.state.engine.code_hash,
-                "note": "Original 5m scores plus closed-candle confirmation and risk vetoes."}
+                "note": "Technical council with historical demo calibration; 4H bias is price-derived, not macro news."
+                        if phase2 else "Original 5m scores plus closed-candle confirmation and risk vetoes."}
 
     # No reset endpoint or public custom-candle mutation endpoint.
     return app

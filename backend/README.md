@@ -1,5 +1,9 @@
 # DardaniaXAUTRADE AI — Phase 1
 
+The parallel, local-only Phase 2 council is documented in [PHASE2.md](PHASE2.md).
+`backend.main:app` remains the Phase 1 entry point; `backend.phase2_main:app` uses
+a separate demo database. No deployment or Android URL change is included.
+
 Demo-only reliability backend. No broker APIs, broker credentials, orders, news,
 macro council, push notifications, calibration, or Android UI changes are included.
 
