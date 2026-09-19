@@ -113,7 +113,7 @@ class NativeAdapter:
             if isinstance(response,Exception):failures.append(response);continue
             body=response.payload;meta=body.get('meta',{})
             if meta.get('symbol')!='XAU/USD' or meta.get('interval')!=tf:raise ValueError('WRONG_MARKET_SYMBOL')
-            if meta.get('currency_base') not in (None,'Gold','XAU') or meta.get('currency_quote') not in (None,'US Dollar','USD'):
+            if meta.get('currency_base') not in (None,'Gold','Gold Spot','XAU') or meta.get('currency_quote') not in (None,'US Dollar','USD'):
                 raise ValueError('WRONG_CURRENCY_PAIR')
             # Explicit requested UTC plus approved UTC contract; no guessing local exchange time.
             if self.spec.source_timezone!='UTC':raise ValueError('UNVERIFIED_SOURCE_TIMEZONE')
