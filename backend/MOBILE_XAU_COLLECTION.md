@@ -7,17 +7,28 @@ or Render environment mutation has been performed. Android and engine logic are 
 
 Entrypoint remains `backend.mobile.api:app`, one Uvicorn worker/Render instance and a
 dedicated persistent SQLite file. HTTP endpoints remain read-only. A lifespan-owned
-scheduler polls at most once per 60 seconds after the preceding cycle completes;
+scheduler uses a Basic-safe two-minute cadence aligned just after UTC minute closes;
 slow cycles produce explicit gaps, never a catch-up burst or invented candles.
+The collector skips scheduled gold-session closures under the existing engine policy.
 The database owner lock is retained until the scheduler exits on shutdown.
 Neither `RealRunner` nor the local-only forward runner constructor is called.
 The scheduler reuses existing cycle, checkpoint, immutable evidence and replay algorithms.
 
-Only Twelve Data XAU/USD is queried: five `/time_series` requests per poll for
-1min, 5min, 15min, 1h and 4h, with `timezone=UTC`. Header-only authentication and
-intraday timezone selection follow the [official Twelve Data API documentation](https://twelvedata.com/docs).
-This can require roughly 7,200 endpoint requests per continuously running day before
-rate-limit backoff; actual account credit costs/entitlements must be verified by the operator.
+Only Twelve Data XAU/USD is queried. On process bootstrap the collector requests
+1min, 5min, 15min, 1h and 4h once to establish at least 60 closed candles per frame.
+After bootstrap, each collection cycle makes only one `/time_series` request for
+1min (`outputsize=1000`, `timezone=UTC`) and deterministically derives newly closed
+5min, 15min, 1h and 4h candles from provider-supplied 1min OHLC. Existing higher-frame
+history is append-only within the process; it is refreshed from direct provider frames
+again after a process restart. Header-only authentication and intraday timezone
+selection follow the [official Twelve Data API documentation](https://twelvedata.com/docs).
+
+Twelve Data currently lists XAU/USD as the Commodity market's trial symbol and Basic
+allows 800 API credits/day. `/time_series` costs one credit per symbol request.
+At a two-minute steady-state cadence this design uses about 720 requests per full
+24-hour day before session-closure skips, plus five bootstrap requests per process
+start. The operator must still monitor actual usage and avoid restart loops or manual
+request bursts that could consume the remaining Basic quota.
 
 All five frames must be present, valid, closed and fresh before an observation can
 be archived. Forming candles are excluded; future candles, invalid symbols, non-UTC
@@ -61,8 +72,11 @@ Existing operational names remain `MOBILE_DB_PATH`, `MOBILE_DISK_PATH`,
 variables. No new polling-frequency control or provider URL override exists.
 
 1. Obtain separately authorized deployment approval. Confirm the Twelve Data account
-   actually licenses XAU/USD and every required interval, unit, real-time access and
-   request volume. Do not manufacture approval references or entitlement expiry.
+   can access XAU/USD as the documented trial symbol, every required interval, unit,
+   real-time response, and the Basic daily request budget. Do not manufacture approval
+   references. For a non-expiring Basic account, use a conservative operator
+   re-verification deadline in `MOBILE_XAU_ENTITLEMENT_UNTIL`; it is a local safety TTL,
+   not a claim that Twelve Data supplied a subscription-expiry date.
 2. Stop the **new mobile-v2 service only** and preserve its existing database. Use the
    existing replay-verified archive procedure with its original configuration first.
    Never repurpose or delete the deployed database or touch the legacy Render service.
@@ -74,9 +88,11 @@ variables. No new polling-frequency control or provider URL override exists.
 4. Check `/health` and `/system-status`: collection false, NOT_READY, approved
    configuration, credential configured true, source unavailable pending validation.
 5. Set only `MOBILE_COLLECTION_ENABLED=true` and restart the single worker. Keep all
-   approval fields and the database path unchanged. Observe sanitized authentication,
-   coverage, freshness and cadence checks. Do not treat approval configuration as proof
-   of successful provider validation. No manual HTTP request triggers a collection tick.
+   approval fields and the database path unchanged. The first successful process cycle
+   is a five-request bootstrap; steady state then uses one 1min request every two minutes
+   and derives higher frames locally. Observe sanitized authentication, coverage,
+   freshness and cadence checks. Do not treat approval configuration as proof of
+   successful provider validation. No manual HTTP request triggers a collection tick.
 6. Require at least three valid advancing observations and a successful restart/replay
    check. Confirm XAU health separately while overall readiness remains NOT_READY.
    Real account validation has not been performed by these offline tests.
