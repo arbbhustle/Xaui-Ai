@@ -248,7 +248,7 @@ class MainActivity : AppCompatActivity() {
             addView(input,LinearLayout.LayoutParams(-1,-2))
             action("Save endpoint & sync") {
                 try {
-                    val candidate=input.text.toString().trim(); ApiClient.validate(candidate)
+                    val candidate=ApiClient.signalEndpoint(input.text.toString())
                     endpoint=candidate; prefs.edit().putString("endpoint",endpoint).apply()
                     endpointDraft=null; editingEndpoint=false
                     generation++; task?.cancel(true); api.cancel(); fetching=false; data=null; connected=false; sync()

@@ -13,6 +13,10 @@ class ApiClient(private val transport: ((String) -> Any)? = null) {
     fun cancel() { activeConnection?.disconnect() }
     companion object {
         const val DEFAULT_ENDPOINT = "https://xau-ai-trader-android.onrender.com/signal"
+        fun signalEndpoint(address: String): String {
+            val uri=validate(address.trim())
+            return if(uri.path.isNullOrEmpty() || uri.path=="/") uri.resolve("/signal").toString() else uri.toString()
+        }
         fun validate(endpoint: String): URI {
             val uri = try { URI(endpoint) } catch (_: Exception) { throw ApiFailure("Invalid HTTPS endpoint") }
             if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null || uri.query != null || uri.fragment != null)
@@ -66,18 +70,19 @@ class ApiClient(private val transport: ((String) -> Any)? = null) {
         } catch(e: ApiFailure) { throw e } catch(_: Exception) { throw ApiFailure("Malformed response") }
     }
     fun fetch(endpoint: String): Dashboard {
-        val signal = read(endpoint) as? JSONObject ?: throw ApiFailure("Malformed signal response")
+        val signalAddress=signalEndpoint(endpoint)
+        val signal = read(signalAddress) as? JSONObject ?: throw ApiFailure("Malformed signal response")
         if (Fields(signal).text("direction", "signal", "champion.direction") == null) throw ApiFailure("Signal response is missing a decision")
         val warnings = mutableListOf<String>()
-        val performance = try { read(sibling(endpoint, "performance")) as? JSONObject ?: throw ApiFailure("Malformed performance") }
+        val performance = try { read(sibling(signalAddress, "performance")) as? JSONObject ?: throw ApiFailure("Malformed performance") }
             catch (_: Exception) { warnings.add("Performance unavailable for this sync"); null }
         val history = try {
-            val raw=read(sibling(endpoint, "history"))
+            val raw=read(sibling(signalAddress, "history"))
             if (raw !is org.json.JSONArray && (raw !is JSONObject || (raw.optJSONArray("items") == null && raw.optJSONArray("history") == null))) throw ApiFailure("Malformed history")
             Presentation.history(raw)
         }
             catch (_: Exception) { warnings.add("History unavailable for this backend"); emptyList() }
-        val trades=try { Presentation.history(read(sibling(endpoint,"trades"))) }
+        val trades=try { Presentation.history(read(sibling(signalAddress,"trades"))) }
             catch(_: Exception) { warnings.add("Closed trade outcomes unavailable for this sync"); emptyList() }
         return Dashboard(signal, performance ?: signal.optJSONObject("performance"), Presentation.attachOutcomes(history,trades), Instant.now(), warnings)
     }

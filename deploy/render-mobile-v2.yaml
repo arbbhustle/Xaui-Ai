@@ -1,0 +1,28 @@
+# Import ONLY as a NEW Blueprint/service. Never sync this into the legacy service.
+services:
+  - type: web
+    name: dardania-xautrade-ai-v2
+    runtime: python
+    plan: 0.5c-512mb
+    numInstances: 1
+    autoDeployTrigger: off
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python -m uvicorn backend.mobile.api:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log
+    healthCheckPath: /health
+    disk:
+      name: dardania-mobile-v2-data
+      mountPath: /var/data
+      sizeGB: 2
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: MOBILE_DB_PATH
+        value: /var/data/mobile-v2.sqlite3
+      - key: MOBILE_DISK_PATH
+        value: /var/data
+      - key: MOBILE_COLLECTION_ENABLED
+        value: "false"
+      - key: MOBILE_MAX_DB_MIB
+        value: "512"
+      - key: MOBILE_MIN_FREE_MIB
+        value: "256"
