@@ -4,11 +4,11 @@ from datetime import datetime, timezone, timedelta
 import os
 import threading
 
-from ..domain import canonical, parse, stamp, INTERVALS
+from ..domain import canonical, parse, stamp, INTERVALS, market_closed
 from ..forward.contracts import normalize
 from ..forward.providers import ProviderFailure
 from ..forward.runner import ForwardRunner
-from ..realdata.adapters import NativeAdapter, synthetic_payload
+from ..realdata.adapters import NativeAdapter, Acquisition, source_time, finite, synthetic_payload
 from ..realdata.collection import RealCollector
 from ..realdata.transport import credential
 
@@ -45,6 +45,12 @@ def xau_spec(candidate):
 
 
 class StrictXauAdapter(NativeAdapter):
+    """Render/Basic-safe adapter: bootstrap all frames once, then poll only 1min."""
+
+    def __init__(self,spec,client=None,environ=None):
+        super().__init__(spec,client,environ)
+        self._mobile_frames={}
+
     def request(self,path,params,now):
         response=super().request(path,params,now)
         body=response.payload
@@ -61,11 +67,74 @@ class StrictXauAdapter(NativeAdapter):
             if at.utcoffset()!=timedelta(0) or at>now:raise ValueError('INVALID_CANDLE_CLOCK')
         return response
 
+    @staticmethod
+    def _merge(existing,incoming,limit,replace_existing=False):
+        rows={row['t']:row for row in existing}
+        for row in incoming:
+            if replace_existing or row['t'] not in rows:rows[row['t']]=row
+        return sorted(rows.values(),key=lambda row:row['t'])[-limit:]
+
+    @staticmethod
+    def _aggregate(minutes,interval):
+        seconds=INTERVALS[interval];width=seconds//60;buckets={}
+        for row in minutes:
+            at=parse(row['t']);epoch=int(at.timestamp());opened=epoch-(epoch%seconds)
+            buckets.setdefault(opened,[]).append(row)
+        result=[]
+        for opened,rows in sorted(buckets.items()):
+            rows=sorted(rows,key=lambda row:row['t'])
+            if len(rows)!=width:continue
+            start=datetime.fromtimestamp(opened,timezone.utc)
+            if any(parse(row['t'])!=start+timedelta(minutes=i) for i,row in enumerate(rows)):continue
+            result.append({'t':stamp(start),'o':rows[0]['o'],'h':max(row['h'] for row in rows),
+                           'l':min(row['l'] for row in rows),'c':rows[-1]['c']})
+        return result
+
+    def _mobile_xau(self,now):
+        # One-time process bootstrap retains the original direct provider coverage.
+        # Subsequent cycles use one 1min request and derive newly closed higher bars.
+        if not self._mobile_frames:
+            first=super()._xau(now)
+            self._mobile_frames={tf:list(first.envelope['value'][tf]) for tf in INTERVALS}
+            details=dict(first.details,mobile_request_mode='BASIC_BOOTSTRAP_5_REQUESTS',
+                         derived_intervals=[])
+            return Acquisition(first.envelope,first.raw_hash,first.verification,details)
+
+        response=self.request('/time_series',{'symbol':'XAU/USD','interval':'1min','timezone':'UTC','outputsize':1000},now)
+        body=response.payload;meta=body.get('meta',{})
+        if meta.get('symbol')!='XAU/USD' or meta.get('interval')!='1min':raise ValueError('WRONG_MARKET_SYMBOL')
+        if meta.get('currency_base') not in (None,'Gold','Gold Spot','XAU') or meta.get('currency_quote') not in (None,'US Dollar','USD'):
+            raise ValueError('WRONG_CURRENCY_PAIR')
+        if self.spec.source_timezone!='UTC' or meta.get('timezone','UTC')!='UTC':raise ValueError('UNVERIFIED_SOURCE_TIMEZONE')
+        minutes=[]
+        for row in body.get('values',[]):
+            at=source_time(row['datetime'],self.spec)
+            if at>now:raise ValueError('FUTURE_CANDLE')
+            if at+timedelta(minutes=1)>now:continue
+            minutes.append({'t':stamp(at),'o':finite(row['open'],0),'h':finite(row['high'],0),
+                            'l':finite(row['low'],0),'c':finite(row['close'],0)})
+        minutes.sort(key=lambda row:row['t'])
+        if not minutes:raise ProviderFailure('NO_CLOSED_CANDLES')
+        if len({row['t'] for row in minutes})!=len(minutes):raise ValueError('DUPLICATE_CANDLE')
+
+        self._mobile_frames['1min']=self._merge(self._mobile_frames['1min'],minutes,1000,True)
+        for interval in ('5min','15min','1h','4h'):
+            derived=self._aggregate(minutes,interval)
+            self._mobile_frames[interval]=self._merge(self._mobile_frames[interval],derived,125,False)
+        frames={tf:list(self._mobile_frames[tf]) for tf in INTERVALS}
+        if not all(frames.values()):raise ProviderFailure('NO_CLOSED_CANDLES')
+        observed=parse(frames['1min'][-1]['t'])+timedelta(minutes=1)
+        return self.finish(frames,observed,now,[response],
+                           {'quote':None,'quote_kind':'CANDLE_ONLY_NO_EXECUTABLE_QUOTE',
+                            'mobile_request_mode':'BASIC_STEADY_1_REQUEST',
+                            'derived_intervals':['5min','15min','1h','4h']},
+                           complete=True)
+
     def acquire(self,now):
         if not self.spec.approved_at(now) or not self.spec.live_entitled:raise ProviderFailure('PROVIDER_NOT_APPROVED')
         token=credential(self.spec,self.environ)
         if token.strip().lower() in ('demo','test','fixture'):raise ProviderFailure('INVALID_CREDENTIAL_FORMAT')
-        acquisition=super().acquire(now)
+        acquisition=self._mobile_xau(now)
         row=normalize(self.spec.legacy,acquisition.envelope,now,acquisition.raw_hash)
         proof=acquisition.verification
         if (row['health']!='HEALTHY' or row['errors'] or row['data_mode']!='LIVE_DATA'
@@ -124,9 +193,13 @@ class MobileCollector(ForwardRunner):
         if self.thread is not None:return
         def loop():
             while not self.stop.is_set():
-                self._once()
-                # No catch-up burst; at most one acquisition per 60 seconds.
-                self.stop.wait(60)
+                now=self.clock()
+                if not market_closed(now):self._once()
+                # Basic-safe cadence: one steady-state API request every two minutes,
+                # aligned just after a UTC 1min candle close. No catch-up bursts.
+                now=self.clock();epoch=now.timestamp()
+                next_tick=((int(epoch)//120)+1)*120+5
+                self.stop.wait(max(1,next_tick-epoch))
         self.thread=threading.Thread(target=loop,name='mobile-xau',daemon=True)
         self.thread.start()
 
