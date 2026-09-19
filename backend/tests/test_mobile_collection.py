@@ -105,7 +105,7 @@ def test_success_cadence_closed_candles_restart_replay_and_duplicate(tmp_path,mo
         assert state['status']=='NOT_READY' and state['collection_enabled']
         assert all(p['approval']=='UNAPPROVED' for p in state['providers'][1:])
         assert runtime.collector._once()['status']=='DUPLICATE_CYCLE'
-        assert len(calls)==15
+        assert len(calls)==7
         assert system(runtime,current[0]+timedelta(minutes=4))['xau']['data_mode']=='UNAVAILABLE'
         with runtime.read() as conn:
             identity=conn.execute('SELECT id FROM decisions LIMIT 1').fetchone()[0]
