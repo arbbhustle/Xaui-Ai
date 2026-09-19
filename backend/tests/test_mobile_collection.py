@@ -98,7 +98,9 @@ def test_success_cadence_closed_candles_restart_replay_and_duplicate(tmp_path,mo
             current[0]=NOW+timedelta(minutes=i)
             result=runtime.collector._once()
             assert result.get('status')!='COLLECTION_OR_INTEGRITY_FAILURE'
-        assert len(calls)==15
+        assert len(calls)==7
+        assert sum(1 for call in calls if call['interval']=='1min')==3
+        assert sum(1 for call in calls if call['interval']!='1min')==4
         state=system(runtime,current[0]);assert state['xau']['data_mode']=='LIVE_DATA'
         assert state['status']=='NOT_READY' and state['collection_enabled']
         assert all(p['approval']=='UNAPPROVED' for p in state['providers'][1:])
@@ -112,6 +114,22 @@ def test_success_cadence_closed_candles_restart_replay_and_duplicate(tmp_path,mo
     with Runtime(path) as runtime:
         assert runtime.replay['status']=='PASSED'
         assert runtime.engine.replay(identity)['matches']
+
+
+def test_basic_safe_steady_state_uses_one_request(tmp_path,monkeypatch):
+    approve(monkeypatch);current=[NOW]
+    with Runtime(tmp_path/'m.db') as runtime:
+        calls=wire(runtime,monkeypatch,current)
+        runtime.collector._once()
+        assert len(calls)==5
+        current[0]=NOW+timedelta(minutes=1)
+        runtime.collector._once()
+        assert len(calls)==6 and calls[-1]['interval']=='1min'
+        with runtime.read() as conn:
+            row=conn.execute('SELECT payload_id FROM forward_receipts ORDER BY received_at DESC LIMIT 1').fetchone()
+            value=runtime.store.get_observation_document(conn,row[0])
+        assert set(value['value'])=={'1min','5min','15min','1h','4h'}
+        assert value['native']['details']['mobile_request_mode']=='BASIC_STEADY_1_REQUEST'
 
 
 def test_mock_transport_never_real(tmp_path,monkeypatch):
