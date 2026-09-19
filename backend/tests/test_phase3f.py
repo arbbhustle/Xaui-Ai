@@ -164,6 +164,14 @@ def test_news_future_rejected():
     with pytest.raises(ValueError):adapter(spec('news'),mutate).acquire(NOW)
 
 
+def test_xau_gold_spot_metadata_is_accepted():
+    def mutate(raw):
+        raw['meta'].update(currency_base='Gold Spot',currency_quote='US Dollar')
+        return raw
+    result=adapter(spec('xau'),mutate).acquire(NOW)
+    assert result.envelope['symbol']=='XAU/USD'
+
+
 @pytest.mark.parametrize('defect',['symbol','timezone','quote','unit'])
 def test_xau_mapping_and_quote_checks(defect):
     def mutate(raw):
