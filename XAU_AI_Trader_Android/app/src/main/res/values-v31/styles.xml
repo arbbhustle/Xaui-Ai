@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.XAUAI" parent="Theme.XAUAI.Base">
+        <item name="android:windowSplashScreenBackground">@color/bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+</resources>

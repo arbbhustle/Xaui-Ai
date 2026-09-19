@@ -1,0 +1,15 @@
+<resources>
+    <color name="bg">#070A0F</color>
+    <color name="bg2">#0C1119</color>
+    <color name="card">#111824</color>
+    <color name="card2">#151F2E</color>
+    <color name="stroke">#263349</color>
+    <color name="text">#F5F7FB</color>
+    <color name="muted">#8D9AAF</color>
+    <color name="buy">#22D38A</color>
+    <color name="sell">#FF5E68</color>
+    <color name="wait">#F5B83B</color>
+    <color name="accent">#D7B56D</color>
+    <color name="accent2">#D7B56D</color>
+    <color name="purple">#B783FF</color>
+</resources>

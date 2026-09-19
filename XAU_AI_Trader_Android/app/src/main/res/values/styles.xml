@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.XAUAI.Base" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+    <style name="Theme.XAUAI" parent="Theme.XAUAI.Base" />
+</resources>
