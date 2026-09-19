@@ -1,4 +1,4 @@
-"""Dedicated, bounded, collection-disabled hosting of the Phase 3F engine chain."""
+"""Dedicated, bounded hosting of the Phase 3F engine chain; acquisition is opt-in."""
 from contextlib import contextmanager, closing
 from dataclasses import asdict
 from pathlib import Path
@@ -12,6 +12,7 @@ from ..realdata.config import NativeSpec
 from ..realdata.runner import RealEngine
 from ..realdata.store import RealStore
 from ..worker import WorkerLock
+from .collection import enabled, xau_spec, MobileCollector
 
 
 MIB = 1024 * 1024
@@ -28,8 +29,7 @@ def candidates():
 
 def configured_path(path=None):
     # A credential or environment toggle must never silently turn on acquisition.
-    if os.environ.get('MOBILE_COLLECTION_ENABLED', 'false').lower() != 'false':
-        raise RuntimeError('COLLECTION_DISABLED_FOR_INITIAL_DEPLOYMENT')
+    enabled() # Strict toggle syntax; collection ownership belongs to the lifespan.
     value = Path(path or os.environ.get('MOBILE_DB_PATH', DEFAULT_DB))
     if os.environ.get('RENDER'):
         disk = Path(os.environ.get('MOBILE_DISK_PATH', '/var/data'))
@@ -48,8 +48,9 @@ def configured_path(path=None):
 
 
 class Runtime:
-    """Single owner, no scheduler. GETs never manufacture minute ticks or decisions."""
+    """Own the database for the entire lifespan, including scheduler shutdown."""
     def __init__(self, path=None):
+        self.collection_enabled=enabled()
         self.path = configured_path(path)
         self.limit = int(os.environ.get('MOBILE_MAX_DB_MIB', '512')) * MIB
         self.reserve = int(os.environ.get('MOBILE_MIN_FREE_MIB', '256')) * MIB
@@ -63,7 +64,7 @@ class Runtime:
         free = shutil.disk_usage(self.path.parent).free
         return {'allocated_bytes':size, 'budget_bytes':self.limit, 'free_bytes':free,
                 'reserve_bytes':self.reserve, 'within_budget':size < self.limit and free >= self.reserve,
-                'retention':'NO_EVIDENCE_PRUNING_COLLECTION_DISABLED', 'collection_enabled':False}
+                'retention':'STOP_AT_BUDGET_NO_EVIDENCE_PRUNING', 'collection_enabled':self.collection_enabled}
 
     def __enter__(self):
         self.lock.__enter__()
@@ -75,9 +76,11 @@ class Runtime:
                 with closing(sqlite3.connect(self.path.as_uri()+'?mode=ro', uri=True)) as conn:
                     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='mobile_metadata'").fetchone():
                         raise RuntimeError('DEDICATED_MOBILE_DATABASE_REQUIRED')
-            self.specs = candidates()
+            self.specs = tuple(xau_spec(s) if s.channel=='xau' else s for s in candidates())
             self.store = RealStore(self.path, self.specs)
             self.store.verify()
+            # Preserve legacy identity and make the operational pause toggle independent
+            # of model identity. Approved provider configuration requires a new epoch.
             config = digest({'providers':[asdict(s) for s in self.specs], 'collection_enabled':False,
                              'service':'mobile-v2'})
             self.engine = RealEngine(self.store, config)
@@ -103,12 +106,14 @@ class Runtime:
                     raise RuntimeError('REPLAY_INTEGRITY_FAILURE')
             self.replay = {'checked_decisions':len(ids), 'status':'PASSED' if ids else 'NO_DECISIONS_YET'}
             self.store.verify()
+            self.collector=MobileCollector(self)
             return self
         except BaseException:
             self.lock.__exit__()
             raise
 
     def __exit__(self, *args):
+        if hasattr(self,'collector'):self.collector.close()
         self.lock.__exit__()
 
     @contextmanager

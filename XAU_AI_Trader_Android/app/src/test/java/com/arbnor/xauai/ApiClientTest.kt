@@ -35,7 +35,7 @@ class ApiClientTest {
         val urls=mutableListOf<String>()
         ApiClient { url -> urls.add(url); if(url.endsWith("signal")) JSONObject().put("direction","NO_TRADE") else if(url.endsWith("history")) JSONArray() else JSONObject() }.fetch(ApiClient.DEFAULT_ENDPOINT)
         assertEquals(listOf("signal","performance","history","trades"),urls.map { it.substringAfterLast('/') })
-        assertTrue(urls.all { it.startsWith("https://xau-ai-trader-android.onrender.com/") })
+        assertTrue(urls.all { it.startsWith("https://dardania-xautrade-ai-v2.onrender.com/") })
     }
     @Test fun closedOutcomesJoinedByDecisionIdentity() {
         val history=JSONObject().put("decision_id","one").put("direction","BUY")

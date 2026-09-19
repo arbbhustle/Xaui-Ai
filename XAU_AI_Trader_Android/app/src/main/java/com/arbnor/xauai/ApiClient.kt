@@ -12,7 +12,7 @@ class ApiClient(private val transport: ((String) -> Any)? = null) {
     @Volatile private var activeConnection: HttpURLConnection? = null
     fun cancel() { activeConnection?.disconnect() }
     companion object {
-        const val DEFAULT_ENDPOINT = "https://xau-ai-trader-android.onrender.com/signal"
+        const val DEFAULT_ENDPOINT = "https://dardania-xautrade-ai-v2.onrender.com/signal"
         fun signalEndpoint(address: String): String {
             val uri=validate(address.trim())
             return if(uri.path.isNullOrEmpty() || uri.path=="/") uri.resolve("/signal").toString() else uri.toString()

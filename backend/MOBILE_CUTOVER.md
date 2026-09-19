@@ -1,12 +1,16 @@
 # Parallel mobile backend cutover — preparation only
 
+**Update:** The opt-in XAU-only scheduler and current activation procedure are documented
+in [MOBILE_XAU_COLLECTION.md](MOBILE_XAU_COLLECTION.md). Collection remains off by default.
+The initial integration results below describe the prior disabled-only verification.
+
 ## Deployment target and architecture
 
 Use **`backend.mobile.api:app`**, from the repository root. This is a new read-only HTTP boundary around the committed Phase 3F store/engine, not the old Phase 1 `backend.main:app` or the local-only Phase 3C application.
 
 The unchanged engine chain is `RealEngine` (Phase 3F) → `ForwardEngine` (Phase 3E) → `Phase3CEngine` (isolated research Challenger) → `Phase3BEngine` (production DEMO Champion, hidden-state/DGFE) → Phase 3A intelligence → Phase 2 council. Phase 3D remains an offline evaluation lab: its research safeguards do not become a prediction source or promote a strategy. Champion remains Phase 3B. Challenger and shadows remain research-only; automatic promotion is impossible in this service.
 
-The existing Phase 3E/3F runners deliberately refuse Render. Their guards, source hashes and replay logic are unchanged. The new runtime initializes the same store/engine classes and verifies journal/replay integrity, but **does not create a polling worker, adapters, fixture generator or execution loop**. It accepts no public mutation endpoints. It is deployment-ready in the requested **collection-disabled integration mode**, not ready for live market intelligence or Forward DEMO trading evidence.
+The existing Phase 3E/3F runners deliberately refuse Render. Their guards, source hashes and replay logic are unchanged. The mobile runtime initializes the same store/engine classes and verifies journal/replay integrity. Its optional XAU-only scheduler does not invoke those local-only constructors. HTTP endpoints remain read-only and collection is off by default. See the XAU activation guide for approval, dedicated epoch and validation requirements.
 
 ## API contract
 
@@ -17,7 +21,7 @@ The existing Phase 3E/3F runners deliberately refuse Render. Their guards, sourc
 | `GET /performance` | Provenance-qualified Phase 3F report, separated Champion/Challenger/shadow cohorts. Insufficient cohorts omit metrics and show INSUFFICIENT_FORWARD_DATA. |
 | `GET /history` | `items`, `next_cursor`, source; default 30/max 200. Archived Champion decisions retain available legacy/council/intelligence details and explicit data mode. |
 | `GET /trades` | `items`, `next_cursor`; immutable finalized Champion demo outcomes only, default 50/max 200. Research outcomes cannot join Champion history. Gross/net R and cost/excursion fields appear only if recorded. |
-| `GET /system-status` | NOT_READY, collection disabled, candidate providers UNAPPROVED/UNCONFIGURED, Forex Factory secondary-only/disabled, storage budget and startup replay audit. |
+| `GET /system-status` | NOT_READY, actual collection toggle, XAU approval/credential-presence/freshness status, other candidates disabled, Forex Factory secondary-only/disabled, storage budget and startup replay audit. |
 
 `before_row` accepts positive cursors on history/trades. No endpoint changes stored history. Responses use no-store headers. Failures return sanitized NO_TRADE/UNAVAILABLE responses, never old active signals or raw exception/credential text.
 
@@ -54,7 +58,7 @@ Environment variable **names** for this deployment:
 - `MOBILE_MIN_FREE_MIB`
 - `RENDER`, `RENDER_SERVICE_NAME` (platform-provided safety context)
 
-Non-secret defaults are in the Blueprint. `MOBILE_COLLECTION_ENABLED` must remain `false`; any enabling value fails startup. Credentials are **not required** and must not be supplied for this initial integration deployment. Existing adapter credential names for a later separately approved activation are `TWELVE_DATA_API_KEY`, `TRADING_ECONOMICS_API_KEY`, `FINNHUB_API_KEY`. These names do not imply provider approval or sufficient subscriptions. Forex Factory additionally needs validated usage authorization; it never becomes the primary calendar authority. Environment credentials alone cannot activate this service.
+Non-secret defaults are in the Blueprint. `MOBILE_COLLECTION_ENABLED` defaults to `false`. Only explicit `true` enables the new XAU-only scheduler, subject to the separate activation guide. Credentials are not required in disabled integration mode. `TWELVE_DATA_API_KEY` is the sole permitted collection credential; Trading Economics, Finnhub and Forex Factory stay disabled. A credential alone cannot establish approval, readiness or LIVE validation.
 
 Configuration follows [Render Blueprint documentation](https://render.com/docs/blueprint-spec), [persistent disk requirements](https://render.com/docs/disks), and [Python version selection](https://render.com/docs/python-version). Service-name/plan availability and the final public URL must be confirmed when deployment is separately authorized. Disk attachment entails maintenance downtime; this is not a multi-host SQLite configuration.
 
@@ -78,7 +82,7 @@ The command checks destination headroom, uses SQLite online backup (including WA
 
 ## Startup/restart and recovery
 
-On startup: require a dedicated database, acquire its single-owner lock, initialize/validate schema, verify immutable evidence, match engine/config identity and replay existing decisions. No missing market intervals are fabricated. An incomplete CAPTURED cycle causes a fail-closed startup requiring offline recovery review; it is not silently discarded or replayed as a new current signal. This deployment cannot create pending acquisition cycles because collection is absent. A corrupted database must be investigated/restored, never replaced automatically with an empty database.
+On startup: require a dedicated database, acquire its single-owner lock, initialize/validate schema, verify immutable evidence, match engine/config identity and replay existing decisions. No missing market intervals are fabricated. An incomplete CAPTURED cycle causes a fail-closed startup requiring offline recovery review; it is not silently discarded or replayed as a new current signal. The optional collection scheduler starts only after these checks. A corrupted database must be investigated/restored, never replaced automatically with an empty database.
 
 ## Android cutover preparation
 
@@ -97,7 +101,7 @@ The test-only HTTP probe starts Uvicorn on loopback, exercises all six endpoints
 
 ## Limits before market operation
 
-This is ready only for a separate **disabled-data integration service** after deployment approval. Real provider approval, credentials, authenticated entitlements, exact symbol mappings, live freshness/cadence validation, calendar coverage, operational collection activation review and sustained forward evidence remain absent. NOT_READY and no predictive-edge/profitability claim remain correct. Storage profiling/retention qualification is required before collection activation. No Phase 4B notifications, broker execution or Challenger promotion.
+Real provider approval, credentials, authenticated entitlements, live freshness/cadence validation, calendar coverage and sustained forward evidence remain prerequisites for market operation. XAU-only activation is separately controlled as described in the new guide and cannot remove missing-provider vetoes. NOT_READY and no predictive-edge/profitability claim remain correct. Storage profiling/retention qualification is required before unattended collection. No Phase 4B notifications, broker execution or Challenger promotion.
 
 ## Final local verification (2026-09-19)
 

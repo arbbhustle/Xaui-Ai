@@ -93,8 +93,8 @@ class PresentationTest {
             try { ApiClient.validate(url); fail(url) } catch(_: ApiFailure) { }
         }
     }
-    @Test fun originalEndpointAndSiblingsRetained() {
-        assertEquals("https://xau-ai-trader-android.onrender.com/performance",ApiClient.sibling(ApiClient.DEFAULT_ENDPOINT,"performance"))
+    @Test fun modernEndpointAndSiblingsResolved() {
+        assertEquals("https://dardania-xautrade-ai-v2.onrender.com/performance",ApiClient.sibling(ApiClient.DEFAULT_ENDPOINT,"performance"))
     }
     @Test fun timestampFormattingIsUtcAndFailsClosed() {
         assertEquals("18 Sep 2026 · 12:00:10 UTC",Presentation.time("2026-09-18T14:00:10+02:00"))

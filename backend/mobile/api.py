@@ -1,4 +1,4 @@
-"""Read-only modern mobile API. Phase 3F engines remain unmodified and dormant.
+"""Read-only mobile HTTP API with separate opt-in XAU scheduler ownership.
 
 Deployment entrypoint: backend.mobile.api:app. No import of legacy API applications.
 """
@@ -31,7 +31,8 @@ def public(value, depth=0):
     """Bounded JSON projection; no raw provider documents, headers or credential fields."""
     if depth > 20:raise ValueError('RESPONSE_DEPTH_LIMIT')
     if isinstance(value, dict):
-        return {k:public(v, depth+1) for k,v in value.items() if isinstance(k,str) and not SECRET.search(k)}
+        return {k:public(v, depth+1) for k,v in value.items() if isinstance(k,str)
+                and (not SECRET.search(k) or (k=='credential_configured' and type(v) is bool))}
     if isinstance(value, list):return [public(v, depth+1) for v in value[:200]]
     if isinstance(value, float) and not math.isfinite(value):return None
     if isinstance(value, str):return value[:4000]
@@ -58,8 +59,8 @@ def decision_view(runtime, conn, row, now, historical=False):
     if row is None:
         return {'direction':'NO_TRADE', 'confidence':None, 'confidence_kind':'UNAVAILABLE',
                 'data_mode':'UNAVAILABLE', 'data_status':'UNAVAILABLE', 'timestamp_utc':None,
-                'source':'PHASE3B_CHAMPION', 'reasons':['Waiting for approved provider data; collection is disabled.'],
-                'veto_codes':['COLLECTION_DISABLED','NO_DECISION_AVAILABLE'], 'freshness':{'status':'UNAVAILABLE'}}
+                'source':'PHASE3B_CHAMPION', 'reasons':['No decision available; required providers are not ready.'],
+                'veto_codes':(['COLLECTION_DISABLED'] if not runtime.collection_enabled else [])+['NO_DECISION_AVAILABLE'], 'freshness':{'status':'UNAVAILABLE'}}
     original = checked_decision(row['payload'])
     snapshot_row = conn.execute('SELECT payload FROM snapshots WHERE id=?',(row['snapshot_id'],)).fetchone()
     if not snapshot_row:raise ValueError('MISSING_SNAPSHOT')
@@ -98,18 +99,19 @@ def decision_view(runtime, conn, row, now, historical=False):
     if historical:
         value['historical']=True
     else:
-        guards=['COLLECTION_DISABLED','PROVIDERS_NOT_APPROVED']+errors
+        guards=(['COLLECTION_DISABLED'] if not runtime.collection_enabled else [])+['REQUIRED_PROVIDERS_NOT_READY']+errors
         if original.get('expires_at') and now >= parse(original['expires_at']):guards.append('SIGNAL_EXPIRED')
         value.update(direction='NO_TRADE', action='WAIT', entry=None, sl=None, tp1=None, tp2=None,
                      veto_codes=sorted(set(value.get('veto_codes',[])+guards)))
-        value['reasons']=list(value.get('reasons',[]))+['Collection disabled; archived analysis is not an active trade setup.']
+        value['reasons']=list(value.get('reasons',[]))+['Required providers are not ready; no active trade setup.']
     return public(value)
 
 
 def system(runtime, now):
     storage=runtime.storage()
-    return {'status':'NOT_READY', 'mode':'DEMO_ONLY', 'collection_enabled':False,
-            'reasons':['COLLECTION_DISABLED','PROVIDERS_NOT_APPROVED']+([] if storage['within_budget'] else ['STORAGE_BUDGET_EXCEEDED']),
+    xau=runtime.collector.status(now)
+    state={'status':'NOT_READY', 'mode':'DEMO_ONLY', 'collection_enabled':runtime.collection_enabled,
+            'reasons':(['COLLECTION_DISABLED'] if not runtime.collection_enabled else [])+['REQUIRED_PROVIDERS_NOT_READY']+([] if storage['within_budget'] else ['STORAGE_BUDGET_EXCEEDED']),
             'champion':'PHASE3B_CHAMPION', 'challenger':'ISOLATED_DEMO_ONLY_NO_AUTO_PROMOTION',
             'promotion':'PROMOTION_INELIGIBLE', 'automatic_promotion':False,
             'research_status':'INSUFFICIENT_FORWARD_DATA', 'predictive_edge_established':False,
@@ -118,6 +120,10 @@ def system(runtime, now):
                           'approval':'UNAPPROVED','configuration':'UNCONFIGURED','data_mode':'UNAVAILABLE'} for s in runtime.specs],
             'forex_factory':{'enabled':False,'role':'SECONDARY_CROSS_CHECK_ONLY','usage_status':'UNVALIDATED','can_establish_live':False},
             'storage':storage, 'replay':runtime.replay, 'served_at':stamp(now)}
+    state['xau']=xau
+    state['providers'][0].update(xau,configuration='CONFIGURED' if xau['approval']=='APPROVED_CONFIGURATION' else 'UNCONFIGURED')
+    state['provider_health']['xau']={'status':xau['status'],'providers':[xau]}
+    return state
 
 
 def create_app(db_path=None, clock=lambda:datetime.now(timezone.utc), runtime_factory=Runtime):
@@ -126,6 +132,7 @@ def create_app(db_path=None, clock=lambda:datetime.now(timezone.utc), runtime_fa
         try:
             with runtime_factory(db_path) as runtime:
                 app.state.runtime=runtime
+                if runtime.collection_enabled:runtime.collector.start()
                 yield
         except Exception:
             # Never print exception bodies that could contain provider secrets or DB paths.
@@ -154,14 +161,14 @@ def create_app(db_path=None, clock=lambda:datetime.now(timezone.utc), runtime_fa
 
     def runtime():
         result=app.state.runtime
-        result.store.verify()  # No caching of integrity or source freshness at this small disabled stage.
+        result.store.verify()  # No caching of integrity or source freshness.
         return result
 
     @app.get('/health')
     def health():
         r=runtime();state=system(r,clock())
         return JSONResponse({'status':'OK' if state['storage']['within_budget'] else 'DEGRADED',
-                             'mode':'DEMO_ONLY','readiness':'NOT_READY','collection_enabled':False,
+                             'mode':'DEMO_ONLY','readiness':'NOT_READY','collection_enabled':r.collection_enabled,'xau':state['xau'],
                              'storage_healthy':True,'within_storage_budget':state['storage']['within_budget']},
                             status_code=200 if state['storage']['within_budget'] else 503)
 

@@ -60,10 +60,10 @@ def test_candidate_readiness_and_broker_safety(tmp_path,monkeypatch):
         assert client.post('/trade').status_code==404
 
 
-@pytest.mark.parametrize('flag',['true','1','yes','invalid'])
-def test_collection_cannot_be_enabled(tmp_path,monkeypatch,flag):
+@pytest.mark.parametrize('flag',['TRUE','1','yes','invalid'])
+def test_collection_rejects_invalid_toggle(tmp_path,monkeypatch,flag):
     monkeypatch.setenv('MOBILE_COLLECTION_ENABLED',flag)
-    with pytest.raises(RuntimeError,match='COLLECTION_DISABLED'):
+    with pytest.raises(RuntimeError,match='INVALID_COLLECTION_FLAG'):
         Runtime(tmp_path/'m.sqlite3')
 
 

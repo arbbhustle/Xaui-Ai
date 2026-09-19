@@ -7,6 +7,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MobileIntegrationTest {
+    @Test fun deployedBackendResponsesParseSafely() {
+        val directory=System.getenv("CUTOVER_API_CONTRACT_DIR")
+        org.junit.Assume.assumeNotNull(directory)
+        val parser=ApiClient()
+        val health=parser.parsePayload(File(directory,"health.json").readText()) as JSONObject
+        assertEquals("OK",health.getString("status"))
+        assertEquals("DEMO_ONLY",health.getString("mode"))
+        assertEquals("NOT_READY",health.getString("readiness"))
+        assertFalse(health.getBoolean("collection_enabled"))
+        val api=ApiClient { url -> parser.parsePayload(File(directory,"${url.substringAfterLast('/')}.json").readText()) }
+        val dashboard=api.fetch(ApiClient.DEFAULT_ENDPOINT)
+        assertEquals("NOT_READY",Presentation.readiness(dashboard.signal))
+        assertEquals("NO_TRADE",Presentation.direction(dashboard.signal))
+        assertFalse(Presentation.dataMode(dashboard.signal,Instant.now()).startsWith("LIVE"))
+        assertTrue(dashboard.warnings.isEmpty())
+        Presentation.council(dashboard.signal)
+        Presentation.legacyMetrics(dashboard.signal)
+        Presentation.analytics(dashboard.performance,"CHAMPION")
+    }
+
     @Test fun baseUrlsAndExistingSignalUrlsResolveSafely() {
         for(base in listOf("https://xau-ai-trader-android.onrender.com", "https://parallel.example.invalid/")) {
             val endpoint=ApiClient.signalEndpoint(base)
@@ -19,8 +39,8 @@ class MobileIntegrationTest {
         }
     }
 
-    @Test fun originalDefaultRemainsLegacy() {
-        assertEquals("https://xau-ai-trader-android.onrender.com/signal",ApiClient.DEFAULT_ENDPOINT)
+    @Test fun defaultUsesVerifiedModernBackend() {
+        assertEquals("https://dardania-xautrade-ai-v2.onrender.com/signal",ApiClient.DEFAULT_ENDPOINT)
     }
 
     @Test fun localModernApiResponsesParseThroughProductionModels() {
