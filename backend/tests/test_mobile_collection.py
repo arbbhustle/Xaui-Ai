@@ -239,3 +239,24 @@ def test_validation_expiring_in_flight_rejected_before_storage(tmp_path,monkeypa
         assert observations==[]
         assert audits[0]['reason']=='VALIDATION_AT_RECEIPT_FAILED'
         with runtime.read() as conn:assert conn.execute('SELECT count(*) FROM forward_receipts').fetchone()[0]==0
+def test_4h_aggregate_uses_utc_anchor():
+    start = NOW.replace(hour=1, minute=0, second=0, microsecond=0)
+    minutes = []
+
+    for i in range(480):
+        at = start + timedelta(minutes=i)
+        price = 2000 + i / 100
+        minutes.append({
+            't': stamp(at),
+            'o': price,
+            'h': price + 1,
+            'l': price - 1,
+            'c': price + 0.5,
+        })
+
+    bars = StrictXauAdapter._aggregate(minutes, '4h')
+
+    expected = NOW.replace(hour=4, minute=0, second=0, microsecond=0)
+
+    assert len(bars) == 1
+    assert bars[0]['t'] == stamp(expected)
