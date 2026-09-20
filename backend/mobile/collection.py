@@ -30,6 +30,8 @@ def enabled():
     if value not in ('true','false'):raise RuntimeError('INVALID_COLLECTION_FLAG')
     return value=='true'
 
+MOBILE_XAU_FRESHNESS_SECONDS = 240
+
 
 def xau_spec(candidate):
     """Incomplete or invalid attestations never authorize an HTTP request."""
@@ -287,7 +289,7 @@ class MobileCollector(ForwardRunner):
             request=conn.execute('SELECT status,at FROM forward_requests ORDER BY at DESC LIMIT 1').fetchone()
         spec=next(s for s in self.runtime.specs if s.channel=='xau')
         age=(now-parse(value['observed_at'])).total_seconds() if value else None
-        valid=bool(value and 0<=age<150 and parse(value['received_at'])<=now and value.get('native',{}).get('live_verified')
+        valid=bool(value and 0<=age<MOBILE_XAU_FRESHNESS_SECONDS and parse(value['received_at'])<=now and value.get('native',{}).get('live_verified')
                    and spec.approved_at(now) and request and request['status']=='COMPLETE' and not self.failure
                    and self.runtime.collection_enabled and bool(os.environ.get('TWELVE_DATA_API_KEY','').strip())
                    and self.runtime.storage()['within_budget'])
@@ -295,7 +297,7 @@ class MobileCollector(ForwardRunner):
                 'credential_configured':bool(os.environ.get('TWELVE_DATA_API_KEY','').strip()),
                 'last_observed_at':value['observed_at'] if value else None,
                 'received_at':value['received_at'] if value else None,'age_seconds':age,
-                'freshness':'FRESH' if age is not None and 0<=age<150 else 'STALE' if value else 'UNAVAILABLE',
+                'freshness':'FRESH' if age is not None and 0<=age<MOBILE_XAU_FRESHNESS_SECONDS else 'STALE' if value else 'UNAVAILABLE',
                 'data_mode':'LIVE_DATA' if valid else 'UNAVAILABLE',
                 'status':'HEALTHY' if valid else 'UNAVAILABLE',
                 'last_attempt_status':self.failure or (request['status'] if request else 'NOT_ATTEMPTED'),

@@ -17,6 +17,7 @@ from ..forward.contracts import CRITICAL, MAX_AGE, SYMBOLS
 from ..realdata.reports import report
 from ..realdata.adapters import synthetic_payload
 from .runtime import Runtime
+from .collection import MOBILE_XAU_FRESHNESS_SECONDS
 
 
 FIELDS = frozenset('decision_id direction candidate_direction confidence confidence_kind calibrated_confidence raw_score '
@@ -25,6 +26,15 @@ FIELDS = frozenset('decision_id direction candidate_direction confidence confide
                   'source_candle_closes components council technical_scores intelligence hidden_state slow_regime '
                   'analytics_context timeframe_alignment signal_candle_close model_version strategy_version'.split())
 SECRET = re.compile(r'token|secret|password|api.?key|authorization|credential', re.I)
+def mobile_freshness_errors(closes, now):
+    errors = freshness_errors(closes, now, Policy())
+    try:
+        age = (now - parse(closes['1min'])).total_seconds()
+        if 0 <= age < MOBILE_XAU_FRESHNESS_SECONDS:
+            errors = [e for e in errors if e != 'STALE_DATA:1min']
+    except (KeyError, ValueError, TypeError, AttributeError):
+        pass
+    return errors
 
 
 def public(value, depth=0):
@@ -72,13 +82,18 @@ def decision_view(runtime, conn, row, now, historical=False):
     capture_id = snapshot.get('forward',{}).get('capture_id')
     capture = runtime.store.get_capture(conn,capture_id) if capture_id else None
     if capture and parse(capture['observed_at']) > now:raise ValueError('FUTURE_CAPTURE')
-    errors = freshness_errors(original.get('source_candle_closes',{}),now,Policy())
+    errors = mobile_freshness_errors(original.get('source_candle_closes',{}), now)
     sources=[]
     for observation in (capture or {}).get('observations',[]):
         observed, received = parse(observation['observed_at']), parse(observation['received_at'])
         age=(now-observed).total_seconds()
-        if not observed <= received <= now or not 0 <= age < MAX_AGE[observation['channel']]:
-            errors.append('STALE_PROVIDER:'+observation['channel'])
+        max_age = (
+            MOBILE_XAU_FRESHNESS_SECONDS
+            if observation['channel'] == 'xau'
+            else MAX_AGE[observation['channel']]
+        )
+        if not observed <= received <= now or not 0 <= age < max_age:
+            errors.append('STALE_PROVIDER:' + observation['channel'])
         sources.append({'name':observation['provider'], 'channel':observation['channel'],
                         'symbol':observation['symbol'], 'observed_at':stamp(observed), 'received_at':stamp(received),
                         'age_seconds':age, 'reported_mode_at_capture':observation['data_mode']})

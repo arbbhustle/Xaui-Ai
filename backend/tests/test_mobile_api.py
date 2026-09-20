@@ -234,3 +234,20 @@ def test_future_finalization_is_not_visible(tmp_path):
 @pytest.mark.parametrize('marker',[{'is_test':True},{'is_demo':True},{'environment':'sandbox'},{'data_status':'FIXTURE_DATA'}])
 def test_all_fixture_markers_are_preserved(marker):
     assert fixture({'nested':marker})
+
+
+def test_mobile_xau_freshness_window():
+    closes = {
+        '1min': stamp(NOW - timedelta(seconds=190)),
+        '5min': stamp(NOW),
+        '15min': stamp(NOW),
+        '1h': stamp(NOW),
+        '4h': stamp(NOW),
+    }
+
+    from backend.mobile.api import mobile_freshness_errors
+
+    assert 'STALE_DATA:1min' not in mobile_freshness_errors(closes, NOW)
+
+    closes['1min'] = stamp(NOW - timedelta(seconds=241))
+    assert 'STALE_DATA:1min' in mobile_freshness_errors(closes, NOW)
