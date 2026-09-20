@@ -29,7 +29,7 @@ def archive(database, output):
             # archive; every verification/replay connection closes explicitly.
             restored=copy(source.store);restored.path=str(backup)
             restored.verify()
-            engine=RealEngine(restored,source.engine.configuration)
+            engine=type(source.engine)(restored,source.engine.configuration)
             with restored.connect() as conn:ids=[r[0] for r in conn.execute('SELECT id FROM decisions')]
             for identity in ids:
                 if not engine.replay(identity)['matches'] or not engine.replay_meta(identity)['matches']:

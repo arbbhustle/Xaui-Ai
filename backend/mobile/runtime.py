@@ -13,6 +13,7 @@ from ..realdata.runner import RealEngine
 from ..realdata.store import RealStore
 from ..worker import WorkerLock
 from .collection import enabled, xau_spec, MobileCollector
+from .xau_alignment_v1 import VERSION as ALIGNMENT_V1, MobileXauEngine
 
 
 MIB = 1024 * 1024
@@ -51,6 +52,8 @@ class Runtime:
     """Own the database for the entire lifespan, including scheduler shutdown."""
     def __init__(self, path=None):
         self.collection_enabled=enabled()
+        self.validator_version=os.environ.get('MOBILE_XAU_VALIDATOR','legacy')
+        if self.validator_version not in ('legacy',ALIGNMENT_V1):raise RuntimeError('UNKNOWN_MOBILE_VALIDATOR')
         self.path = configured_path(path)
         self.limit = int(os.environ.get('MOBILE_MAX_DB_MIB', '512')) * MIB
         self.reserve = int(os.environ.get('MOBILE_MIN_FREE_MIB', '256')) * MIB
@@ -81,11 +84,14 @@ class Runtime:
             self.store.verify()
             # Preserve legacy identity and make the operational pause toggle independent
             # of model identity. Approved provider configuration requires a new epoch.
-            config = digest({'providers':[asdict(s) for s in self.specs], 'collection_enabled':False,
-                             'service':'mobile-v2'})
-            self.engine = RealEngine(self.store, config)
-            identity = canonical({'engine':self.engine.forward_hash, 'model':self.engine.model_identity,
-                                  'configuration':config, 'schema':1})
+            configuration={'providers':[asdict(s) for s in self.specs], 'collection_enabled':False,'service':'mobile-v2'}
+            if self.validator_version!= 'legacy':configuration['validator_version']=self.validator_version
+            config=digest(configuration)
+            engine_class=RealEngine if self.validator_version=='legacy' else MobileXauEngine
+            self.engine=engine_class(self.store,config)
+            metadata={'engine':self.engine.forward_hash,'model':self.engine.model_identity,'configuration':config,'schema':1}
+            if self.validator_version!='legacy':metadata['validator_version']=self.validator_version
+            identity=canonical(metadata)
             with self.store.transaction() as conn:
                 conn.execute('CREATE TABLE IF NOT EXISTS mobile_metadata(id INTEGER PRIMARY KEY CHECK(id=1), identity TEXT NOT NULL)')
                 prior = conn.execute('SELECT identity FROM mobile_metadata WHERE id=1').fetchone()

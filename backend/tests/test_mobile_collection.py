@@ -130,6 +130,8 @@ def test_basic_safe_steady_state_uses_one_request(tmp_path,monkeypatch):
             value=runtime.store.get_observation_document(conn,row[0])
         assert set(value['value'])=={'1min','5min','15min','1h','4h'}
         assert value['native']['details']['mobile_request_mode']=='BASIC_STEADY_1_REQUEST'
+        assert value['native']['details']['aggregation_anchors_seconds']=={'4h':0}
+        assert value['native']['details']['aggregation_anchor_source']=='NATIVE_4H_BOOTSTRAP'
 
 
 def test_mock_transport_never_real(tmp_path,monkeypatch):
@@ -239,7 +241,7 @@ def test_validation_expiring_in_flight_rejected_before_storage(tmp_path,monkeypa
         assert observations==[]
         assert audits[0]['reason']=='VALIDATION_AT_RECEIPT_FAILED'
         with runtime.read() as conn:assert conn.execute('SELECT count(*) FROM forward_receipts').fetchone()[0]==0
-def test_4h_aggregate_uses_utc_anchor():
+def test_4h_aggregate_matches_twelve_data_anchor():
     start = NOW.replace(hour=1, minute=0, second=0, microsecond=0)
     minutes = []
 
@@ -254,9 +256,85 @@ def test_4h_aggregate_uses_utc_anchor():
             'c': price + 0.5,
         })
 
-    bars = StrictXauAdapter._aggregate(minutes, '4h')
+    native=[minutes[0],minutes[240]]
+    anchor=StrictXauAdapter._native_4h_anchor(native,NOW)
+    bars = StrictXauAdapter._aggregate(minutes, '4h',anchor)
 
-    expected = NOW.replace(hour=4, minute=0, second=0, microsecond=0)
+    expected = [
+        stamp(NOW.replace(hour=1, minute=0, second=0, microsecond=0)),
+        stamp(NOW.replace(hour=5, minute=0, second=0, microsecond=0)),
+    ]
 
-    assert len(bars) == 1
-    assert bars[0]['t'] == stamp(expected)
+    assert [bar['t'] for bar in bars] == expected
+    assert bars[0]['o']==minutes[0]['o'] and bars[0]['c']==minutes[239]['c']
+    assert bars[0]['h']==max(row['h'] for row in minutes[:240])
+    assert bars[0]['l']==min(row['l'] for row in minutes[:240])
+
+
+@pytest.mark.parametrize('offset',[0,3600,7200,10800])
+def test_provider_anchor_bootstrap_steady_and_restart(monkeypatch,offset):
+    from backend.domain import parse, INTERVALS
+    from test_phase3f import spec
+    calls=[]
+    def read(self,spec,path,params,now,environ=None):
+        tf=params['interval'];calls.append(tf);data=body('xau',now,tf)
+        if tf=='4h':
+            for row in data['values']:row['datetime']=stamp(parse(row['datetime'])+timedelta(seconds=offset))
+        if tf=='1min':
+            template=data['values'][-1]
+            end=now.replace(second=0,microsecond=0)
+            data['values']=[dict(template,datetime=stamp(end-timedelta(minutes=1000-i))) for i in range(1000)]
+        return Response(data,digest(data),True,None) # Offline boundary test, not real evidence.
+    monkeypatch.setattr(NativeHTTP,'read',read)
+    adapter=StrictXauAdapter(spec('xau'),environ={'OFFLINE_TEST_TOKEN':'offline-anchor-placeholder'})
+    bootstrap=adapter._mobile_xau(NOW)
+    assert len(calls)==5
+    assert bootstrap.details['aggregation_anchors_seconds']=={'4h':offset}
+    later=NOW+timedelta(hours=4)
+    steady=adapter._mobile_xau(later)
+    assert len(calls)==6 and calls[-1]=='1min'
+    bars=steady.envelope['value']['4h']
+    assert all(int(parse(row['t']).timestamp())%14400==offset for row in bars)
+    expected=int(later.timestamp())-((int(later.timestamp())-offset)%14400)-14400
+    assert int(parse(bars[-1]['t']).timestamp())==expected
+    assert steady.details['aggregation_anchors_seconds']=={'4h':offset}
+    for tf in ('5min','15min','1h'):
+        assert all(int(parse(row['t']).timestamp())%INTERVALS[tf]==0 for row in steady.envelope['value'][tf])
+    restarted=StrictXauAdapter(spec('xau'),environ={'OFFLINE_TEST_TOKEN':'offline-anchor-placeholder'})
+    replay_bootstrap=restarted._mobile_xau(later)
+    assert len(calls)==11 # Fresh native bootstrap re-establishes the origin; no guessed default.
+    assert restarted._mobile_4h_anchor==offset
+    assert replay_bootstrap.details['aggregation_anchors_seconds']==steady.details['aggregation_anchors_seconds']
+
+
+@pytest.mark.parametrize('case',['missing','single','mixed','duplicate','future','fractional'])
+def test_ambiguous_native_anchor_fails_closed(case):
+    start=NOW.replace(hour=1,minute=0,second=0,microsecond=0)
+    rows=[{'t':stamp(start)},{'t':stamp(start+timedelta(hours=4))}]
+    if case=='missing':rows=[]
+    if case=='single':rows=rows[:1]
+    if case=='mixed':rows[1]['t']=stamp(start+timedelta(hours=5))
+    if case=='duplicate':rows[1]=rows[0]
+    if case=='future':rows[1]['t']=stamp(NOW+timedelta(hours=4))
+    if case=='fractional':rows[1]['t']=stamp(start+timedelta(hours=4,seconds=1))
+    with pytest.raises(ValueError):StrictXauAdapter._native_4h_anchor(rows,NOW)
+
+
+def test_4h_requires_explicit_native_anchor():
+    with pytest.raises(ValueError,match='NATIVE_4H_ANCHOR_REQUIRED'):
+        StrictXauAdapter._aggregate([],'4h')
+
+
+def test_non_epoch_native_anchor_still_fails_closed_in_frozen_validator(tmp_path,monkeypatch):
+    # The shared frozen domain validator requires epoch alignment. Do not silently
+    # shift provider timestamps or weaken that gate in this aggregation-only patch.
+    from backend.domain import parse
+    approve(monkeypatch)
+    def shifted(data,tf):
+        if tf=='4h':
+            for row in data['values']:row['datetime']=stamp(parse(row['datetime'])+timedelta(hours=1))
+    with Runtime(tmp_path/'m.db') as runtime:
+        wire(runtime,monkeypatch,[NOW],shifted)
+        adapter=runtime.collector.collector.providers[runtime.specs[0].name]
+        with pytest.raises(ValueError,match='XAU_VALIDATION_FAILED'):adapter.acquire(NOW)
+        assert adapter._mobile_frames=={} and adapter._mobile_4h_anchor is None

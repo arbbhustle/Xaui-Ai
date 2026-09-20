@@ -1,5 +1,6 @@
 """Opt-in, single-owner XAU acquisition; no broker or other vendor activation."""
 from dataclasses import replace
+from copy import deepcopy
 from datetime import datetime, timezone, timedelta
 import os
 import threading
@@ -11,6 +12,7 @@ from ..forward.runner import ForwardRunner
 from ..realdata.adapters import NativeAdapter, Acquisition, source_time, finite, synthetic_payload
 from ..realdata.collection import RealCollector
 from ..realdata.transport import credential
+from .xau_alignment_v1 import VERSION as ALIGNMENT_V1, META, normalize_acquisition
 
 
 def forbidden_marker(value):
@@ -47,9 +49,13 @@ def xau_spec(candidate):
 class StrictXauAdapter(NativeAdapter):
     """Render/Basic-safe adapter: bootstrap all frames once, then poll only 1min."""
 
-    def __init__(self,spec,client=None,environ=None):
+    def __init__(self,spec,client=None,environ=None,alignment_version='legacy'):
         super().__init__(spec,client,environ)
+        if alignment_version not in ('legacy',ALIGNMENT_V1):raise ValueError('UNKNOWN_ALIGNMENT_VERSION')
+        self.alignment_version=alignment_version
         self._mobile_frames={}
+        self._mobile_4h_anchor=None
+        self._mobile_anchor_evidence=None
 
     def request(self,path,params,now):
         response=super().request(path,params,now)
@@ -75,10 +81,30 @@ class StrictXauAdapter(NativeAdapter):
         return sorted(rows.values(),key=lambda row:row['t'])[-limit:]
 
     @staticmethod
-    def _aggregate(minutes,interval):
+    def _native_4h_anchor(rows,now):
+        # UTC specifies the clock, not the provider's session/bucket origin.
+        seconds=INTERVALS['4h'];opens=[]
+        for row in rows:
+            at=parse(row['t'])
+            if at.utcoffset()!=timedelta(0) or at.microsecond or int(at.timestamp())%60:
+                raise ValueError('INVALID_NATIVE_4H_ANCHOR')
+            if at+timedelta(seconds=seconds)>now:raise ValueError('UNCLOSED_NATIVE_4H_ANCHOR')
+            opens.append(int(at.timestamp()))
+        offsets={at%seconds for at in opens}
+        if len(opens)<2 or len(set(opens))!=len(opens) or len(offsets)!=1:
+            raise ValueError('AMBIGUOUS_NATIVE_4H_ANCHOR')
+        return offsets.pop()
+
+    @staticmethod
+    def _aggregate(minutes,interval,anchor_seconds=None):
         seconds=INTERVALS[interval];width=seconds//60;buckets={}
+        if interval=='4h':
+            if type(anchor_seconds) is not int or not 0<=anchor_seconds<seconds or anchor_seconds%60:
+                raise ValueError('NATIVE_4H_ANCHOR_REQUIRED')
+        else:anchor_seconds=0 # Preserve existing 5min, 15min and 1h boundaries.
         for row in minutes:
-            at=parse(row['t']);epoch=int(at.timestamp());opened=epoch-(epoch%seconds)
+            at=parse(row['t']);epoch=int(at.timestamp())
+            opened=epoch-((epoch-anchor_seconds)%seconds)
             buckets.setdefault(opened,[]).append(row)
         result=[]
         for opened,rows in sorted(buckets.items()):
@@ -95,9 +121,17 @@ class StrictXauAdapter(NativeAdapter):
         # Subsequent cycles use one 1min request and derive newly closed higher bars.
         if not self._mobile_frames:
             first=super()._xau(now)
+            anchor=self._native_4h_anchor(first.envelope['value']['4h'],now)
             self._mobile_frames={tf:list(first.envelope['value'][tf]) for tf in INTERVALS}
+            self._mobile_4h_anchor=anchor
+            if self.alignment_version==ALIGNMENT_V1:
+                self._mobile_anchor_evidence={'version':ALIGNMENT_V1,'anchor_seconds':anchor,
+                    'provider_identity':self.spec.identity,'bootstrap_at':stamp(now),
+                    'native_bars':deepcopy(first.envelope['value']['4h']),'raw_hash':first.raw_hash}
             details=dict(first.details,mobile_request_mode='BASIC_BOOTSTRAP_5_REQUESTS',
-                         derived_intervals=[])
+                         derived_intervals=[],aggregation_anchors_seconds={'4h':anchor},
+                         aggregation_anchor_source='NATIVE_4H_BOOTSTRAP')
+            if self._mobile_anchor_evidence:details[META]=self._mobile_anchor_evidence
             return Acquisition(first.envelope,first.raw_hash,first.verification,details)
 
         response=self.request('/time_series',{'symbol':'XAU/USD','interval':'1min','timezone':'UTC','outputsize':1000},now)
@@ -119,7 +153,7 @@ class StrictXauAdapter(NativeAdapter):
 
         self._mobile_frames['1min']=self._merge(self._mobile_frames['1min'],minutes,1000,True)
         for interval in ('5min','15min','1h','4h'):
-            derived=self._aggregate(minutes,interval)
+            derived=self._aggregate(minutes,interval,self._mobile_4h_anchor)
             self._mobile_frames[interval]=self._merge(self._mobile_frames[interval],derived,125,False)
         frames={tf:list(self._mobile_frames[tf]) for tf in INTERVALS}
         if not all(frames.values()):raise ProviderFailure('NO_CLOSED_CANDLES')
@@ -127,6 +161,9 @@ class StrictXauAdapter(NativeAdapter):
         return self.finish(frames,observed,now,[response],
                            {'quote':None,'quote_kind':'CANDLE_ONLY_NO_EXECUTABLE_QUOTE',
                             'mobile_request_mode':'BASIC_STEADY_1_REQUEST',
+                            'aggregation_anchors_seconds':{'4h':self._mobile_4h_anchor},
+                            'aggregation_anchor_source':'NATIVE_4H_BOOTSTRAP',
+                            **({META:self._mobile_anchor_evidence} if self._mobile_anchor_evidence else {}),
                             'derived_intervals':['5min','15min','1h','4h']},
                            complete=True)
 
@@ -134,21 +171,56 @@ class StrictXauAdapter(NativeAdapter):
         if not self.spec.approved_at(now) or not self.spec.live_entitled:raise ProviderFailure('PROVIDER_NOT_APPROVED')
         token=credential(self.spec,self.environ)
         if token.strip().lower() in ('demo','test','fixture'):raise ProviderFailure('INVALID_CREDENTIAL_FORMAT')
-        acquisition=self._mobile_xau(now)
-        row=normalize(self.spec.legacy,acquisition.envelope,now,acquisition.raw_hash)
-        proof=acquisition.verification
-        if (row['health']!='HEALTHY' or row['errors'] or row['data_mode']!='LIVE_DATA'
-                or not all(proof.get(k) is True for k in ('authenticated','real_transport','entitled','complete'))
-                or set(row['value'])!=set(INTERVALS)):
-            raise ValueError('XAU_VALIDATION_FAILED')
-        return acquisition
+        previous_frames={tf:list(rows) for tf,rows in self._mobile_frames.items()}
+        previous_anchor=self._mobile_4h_anchor
+        previous_evidence=self._mobile_anchor_evidence
+        try:
+            acquisition=self._mobile_xau(now)
+            row=(normalize_acquisition(self.spec,acquisition,now) if self.alignment_version==ALIGNMENT_V1
+                 else normalize(self.spec.legacy,acquisition.envelope,now,acquisition.raw_hash))
+            proof=acquisition.verification
+            if (row['health']!='HEALTHY' or row['errors'] or row['data_mode']!='LIVE_DATA'
+                    or not all(proof.get(k) is True for k in ('authenticated','real_transport','entitled','complete'))
+                    or set(row['value'])!=set(INTERVALS)):
+                raise ValueError('XAU_VALIDATION_FAILED')
+            return acquisition
+        except Exception:
+            # Rejected native alignment must never seed a later steady-state poll.
+            self._mobile_frames=previous_frames
+            self._mobile_4h_anchor=previous_anchor
+            self._mobile_anchor_evidence=previous_evidence
+            raise
 
 
 class ReceiptValidatedCollector(RealCollector):
+    def _scoped_read(self,spec,started,inner):
+        adapter=self.providers[spec.name]
+        try:
+            acquisition=adapter.acquire(started);received=self.clock()
+            if received<started:raise ValueError('CLOCK_REVERSED')
+            row=normalize_acquisition(adapter.spec,acquisition,received)
+            row['native']={'verification':acquisition.verification,'details':acquisition.details}
+            if credential(adapter.spec,adapter.environ) in canonical(row):raise ValueError('SECRET_IN_NORMALIZED_DATA')
+            with self.store.connect() as conn:
+                prior=conn.execute('SELECT payload_id FROM forward_receipts WHERE provider=? ORDER BY received_at DESC LIMIT 1',(spec.identity,)).fetchone()
+                if prior:
+                    old=self.store.get_observation_document(conn,prior[0])['native']['details'].get(META)
+                    if not old or old['anchor_seconds']!=acquisition.details[META]['anchor_seconds']:
+                        raise ValueError('ANCHOR_CHANGE_REQUIRES_NEW_EPOCH')
+            inner.append((row,None,0))
+        except ProviderFailure as exc:
+            allowed={'PROVIDER_NOT_APPROVED','CREDENTIAL_UNAVAILABLE','INVALID_CREDENTIAL_FORMAT','AUTH_OR_ENTITLEMENT_DENIED',
+                'RATE_LIMITED','HTTP_PROVIDER_FAILURE','PROVIDER_TIMEOUT','PROVIDER_REJECTED','PROVIDER_READ_FAILED',
+                'RESPONSE_TOO_LARGE','MALFORMED_PAYLOAD','NO_CLOSED_CANDLES'}
+            inner.append((None,exc.code if exc.code in allowed else 'PROVIDER_FAILED',
+                          min(900,max(0,exc.retry_after)) if type(exc.retry_after) is int else 0))
+        except Exception:inner.append((None,'INVALID_OR_UNSAFE_PROVIDER_DATA',0))
+
     def _read(self,spec,started,done,box):
         inner=[]
         try:
-            super()._read(spec,started,threading.Event(),inner)
+            if self.providers[spec.name].alignment_version==ALIGNMENT_V1:self._scoped_read(spec,started,inner)
+            else:super()._read(spec,started,threading.Event(),inner)
             row,error,retry=inner[0]
             native=self.providers[spec.name].spec
             # Network latency can cross freshness or entitlement boundaries after
@@ -168,7 +240,8 @@ class MobileCollector(ForwardRunner):
         self.configuration=self.engine.configuration
         xau=next(s for s in runtime.specs if s.channel=='xau')
         self.specs=(xau.legacy,)
-        self.collector=ReceiptValidatedCollector(self.store,self.specs,{xau.name:StrictXauAdapter(xau)},clock)
+        self.collector=ReceiptValidatedCollector(self.store,self.specs,
+            {xau.name:StrictXauAdapter(xau,alignment_version=runtime.validator_version)},clock)
         self.stop=threading.Event();self.thread=None
         self.failure=None
 
