@@ -236,11 +236,18 @@ def create_app(
 
     @app.get('/health')
     def health():
-        r=runtime();state=system(r,clock())
-        return JSONResponse({'status':'OK' if state['storage']['within_budget'] else 'DEGRADED',
-                             'mode':'DEMO_ONLY','readiness':'NOT_READY','collection_enabled':r.collection_enabled,'xau':state['xau'],
-                             'storage_healthy':True,'within_storage_budget':state['storage']['within_budget']},
-                            status_code=200 if state['storage']['within_budget'] else 503)
+        # Render health checks are liveness probes. Keep this path independent of
+        # collector/provider status and full database verification so a busy
+        # acquisition cycle cannot block deployment health checks. Readiness and
+        # provider details remain available from /system-status.
+        r = app.state.runtime
+        storage = r.storage()
+        healthy = storage['within_budget']
+        return JSONResponse({'status':'OK' if healthy else 'DEGRADED',
+                             'mode':'DEMO_ONLY','readiness':'NOT_READY',
+                             'collection_enabled':r.collection_enabled,
+                             'storage_healthy':healthy,'within_storage_budget':healthy},
+                            status_code=200 if healthy else 503)
 
     @app.get('/system-status')
     def status():return public(system(runtime(),clock()))
