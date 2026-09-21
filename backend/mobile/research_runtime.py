@@ -1,4 +1,4 @@
-"""Persistent US2Y research collector.
+﻿"""Persistent US2Y research collector.
 
 Isolated from the production provider configuration.
 RESEARCH / DEMO ONLY. No broker or trade execution.
@@ -57,13 +57,18 @@ class ResearchUS2YRuntime:
     def __init__(self, main_path=None, path=None, clock=lambda: datetime.now(timezone.utc)):
         self.clock = clock
         self.enabled = research_enabled()
-        self.path = Path(path).resolve() if path else configured_research_path(main_path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
 
         self.stop = threading.Event()
         self.thread = None
         self.failure = None
         self._writer = threading.Lock()
+
+        if not self.enabled:
+            self.path = None
+            return
+
+        self.path = Path(path).resolve() if path else configured_research_path(main_path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
         self._initialize()
 
@@ -182,6 +187,9 @@ class ResearchUS2YRuntime:
             return {"status": self.failure}
 
     def snapshot(self, now=None, limit=120):
+        if not self.enabled:
+            return []
+
         now = now or self.clock()
 
         if not 1 <= limit <= 1000:
