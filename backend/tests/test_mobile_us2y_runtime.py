@@ -4,6 +4,15 @@ from backend.domain import stamp
 from backend.mobile.research_runtime import ResearchUS2YRuntime
 from test_phase1 import NOW
 
+import pytest
+
+@pytest.fixture(autouse=True)
+def enable_research(monkeypatch):
+    monkeypatch.setenv(
+        "MOBILE_RESEARCH_US2Y_ENABLED",
+        "true",
+    )
+
 
 def fake_result(now, value=4.7583):
     observed = now.replace(second=0, microsecond=0) - timedelta(minutes=1)

@@ -18,6 +18,19 @@ DEFAULT_RESEARCH_DB = "backend/data/mobile-v2-us2y-research.sqlite3"
 US2Y_POLL_SECONDS = 300
 US2Y_MAX_AGE_SECONDS = 900
 
+def research_enabled():
+    value = os.environ.get(
+        "MOBILE_RESEARCH_US2Y_ENABLED",
+        "false",
+    )
+
+    if value not in ("true", "false"):
+        raise RuntimeError(
+            "INVALID_RESEARCH_US2Y_FLAG"
+        )
+
+    return value == "true"
+
 
 def configured_research_path(main_path=None):
     configured = os.environ.get("MOBILE_RESEARCH_US2Y_DB_PATH", "").strip()
@@ -43,6 +56,7 @@ class ResearchUS2YRuntime:
 
     def __init__(self, main_path=None, path=None, clock=lambda: datetime.now(timezone.utc)):
         self.clock = clock
+        self.enabled = research_enabled()
         self.path = Path(path).resolve() if path else configured_research_path(main_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -111,6 +125,9 @@ class ResearchUS2YRuntime:
                 )
 
     def once(self):
+        if not self.enabled:
+            return {"status": "COLLECTION_DISABLED"}
+        
         now = self.clock()
 
         if now.tzinfo is None or now.utcoffset() is None:
@@ -198,6 +215,21 @@ class ResearchUS2YRuntime:
         ]
 
     def status(self, now=None):
+        if not self.enabled:
+            return {
+                "status": "DISABLED",
+                "freshness": "UNAVAILABLE",
+                "age_seconds": None,
+                "last_observed_at": None,
+                "credential_configured": bool(
+                    os.environ.get("TWELVE_DATA_API_KEY", "").strip()
+                ),
+                "mode": "RESEARCH_ONLY",
+                "channel": "us2y",
+                "symbol": "US2Y",
+                "last_attempt_status": "COLLECTION_DISABLED",
+            }
+
         now = now or self.clock()
         rows = self.snapshot(now, 1)
 
@@ -235,6 +267,9 @@ class ResearchUS2YRuntime:
         }
 
     def start(self):
+        if not self.enabled:
+            return
+
         if self.thread is not None:
             return
 
