@@ -8,6 +8,7 @@ from copy import deepcopy
 import json
 import math
 import re
+import sqlite3
 
 from backend.mobile.research_api import research_view
 from backend.mobile.research_runtime import ResearchUS2YRuntime
@@ -29,6 +30,31 @@ FIELDS = frozenset('decision_id direction candidate_direction confidence confide
                   'source_candle_closes components council technical_scores intelligence hidden_state slow_regime '
                   'analytics_context timeframe_alignment signal_candle_close model_version strategy_version'.split())
 SECRET = re.compile(r'token|secret|password|api.?key|authorization|credential', re.I)
+
+# Exact allowlists only: exception messages and custom class names are untrusted.
+STARTUP_CODES = frozenset('DEDICATED_PERSISTENT_DISK_REQUIRED LEGACY_SERVICE_FORBIDDEN '
+    'LEGACY_DATABASE_FORBIDDEN UNKNOWN_MOBILE_VALIDATOR INVALID_STORAGE_BUDGET '
+    'STORAGE_BUDGET_EXCEEDED DEDICATED_MOBILE_DATABASE_REQUIRED '
+    'ORIGINAL_ENGINE_CONFIGURATION_REQUIRED PENDING_RECOVERY_REQUIRES_OFFLINE_REVIEW '
+    'REPLAY_INTEGRITY_FAILURE INVALID_COLLECTION_FLAG INVALID_RESEARCH_US2Y_FLAG '
+    'RESEARCH_DB_MUST_USE_PERSISTENT_DISK INCOMPATIBLE_RESEARCH_DATABASE'.split())
+STARTUP_TYPES = {cls: cls.__name__ for cls in (
+    RuntimeError, ValueError, TypeError, OSError, PermissionError, FileNotFoundError,
+    sqlite3.OperationalError, sqlite3.IntegrityError, sqlite3.DatabaseError,
+)}
+
+
+def startup_diagnostic(exc):
+    kind = STARTUP_TYPES.get(type(exc), 'Exception')
+    code = 'UNCLASSIFIED'
+    if type(exc) is RuntimeError and len(exc.args) == 1 and type(exc.args[0]) is str:
+        message = exc.args[0]
+        if message in STARTUP_CODES:
+            code = message
+        elif message == 'Only one monitor process may use this database':
+            code = 'DATABASE_WORKER_LOCKED'
+    return f'type={kind} code={code}'
+
 def mobile_freshness_errors(closes, now):
     errors = freshness_errors(closes, now, Policy())
     try:
@@ -152,10 +178,12 @@ def create_app(
 ):
     @asynccontextmanager
     async def lifespan(app):
+        phase = 'MAIN_RUNTIME'
         try:
             with runtime_factory(db_path) as runtime:
                 app.state.runtime = runtime
 
+                phase = 'RESEARCH_RUNTIME'
                 research_runtime = research_runtime_factory(
                     main_path=runtime.path,
                     clock=clock,
@@ -163,17 +191,23 @@ def create_app(
                 app.state.research_runtime = research_runtime
 
                 if runtime.collection_enabled:
+                    phase = 'COLLECTOR_START'
                     runtime.collector.start()
+                    phase = 'RESEARCH_START'
                     research_runtime.start()
 
                 try:
+                    phase = 'SERVING'
                     yield
                 finally:
+                    phase = 'SHUTDOWN'
                     research_runtime.close()
 
-        except Exception:
+        except Exception as exc:
             # Never print exception bodies that could contain provider secrets or DB paths.
-            raise RuntimeError('MOBILE_STARTUP_OR_STORAGE_FAILURE') from None
+            raise RuntimeError(
+                f'MOBILE_STARTUP_OR_STORAGE_FAILURE phase={phase} {startup_diagnostic(exc)}'
+            ) from None
     app=FastAPI(title='DardaniaXAUTRADE AI parallel mobile API',version='mobile-v2-1',lifespan=lifespan,
                 docs_url=None,redoc_url=None,openapi_url=None)
 
