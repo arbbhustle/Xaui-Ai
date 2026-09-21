@@ -20,7 +20,7 @@ from test_phase3f import spec
 from test_phase3f_forensic import offline_cycle
 
 
-ENDPOINTS=('/health','/signal','/performance','/history','/trades','/system-status')
+ENDPOINTS=('/health','/signal','/research-signal','/performance','/history','/trades','/system-status')
 
 
 def seed(runtime, at=NOW):

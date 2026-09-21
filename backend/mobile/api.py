@@ -9,6 +9,9 @@ import json
 import math
 import re
 
+from backend.mobile.research_api import research_view
+from backend.mobile.research_runtime import ResearchUS2YRuntime
+
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
@@ -141,18 +144,36 @@ def system(runtime, now):
     return state
 
 
-def create_app(db_path=None, clock=lambda:datetime.now(timezone.utc), runtime_factory=Runtime):
+def create_app(
+    db_path=None,
+    clock=lambda: datetime.now(timezone.utc),
+    runtime_factory=Runtime,
+    research_runtime_factory=ResearchUS2YRuntime,
+):
     @asynccontextmanager
     async def lifespan(app):
         try:
             with runtime_factory(db_path) as runtime:
-                app.state.runtime=runtime
-                if runtime.collection_enabled:runtime.collector.start()
-                yield
+                app.state.runtime = runtime
+
+                research_runtime = research_runtime_factory(
+                    main_path=runtime.path,
+                    clock=clock,
+                )
+                app.state.research_runtime = research_runtime
+
+                if runtime.collection_enabled:
+                    runtime.collector.start()
+                    research_runtime.start()
+
+                try:
+                    yield
+                finally:
+                    research_runtime.close()
+
         except Exception:
             # Never print exception bodies that could contain provider secrets or DB paths.
             raise RuntimeError('MOBILE_STARTUP_OR_STORAGE_FAILURE') from None
-
     app=FastAPI(title='DardaniaXAUTRADE AI parallel mobile API',version='mobile-v2-1',lifespan=lifespan,
                 docs_url=None,redoc_url=None,openapi_url=None)
 
@@ -207,6 +228,15 @@ def create_app(db_path=None, clock=lambda:datetime.now(timezone.utc), runtime_fa
                                               execution='ISOLATED_DEMO_ONLY', historical=True, automatic_promotion=False)
                     result['promotion']='PROMOTION_INELIGIBLE'
             return result
+    @app.get('/research-signal')
+    def research_signal():
+        r = runtime()
+        now = clock()
+        return research_view(
+            r,
+            app.state.research_runtime,
+            now,
+        )
 
     @app.get('/performance')
     def performance():
