@@ -61,6 +61,10 @@ class ResearchUS2YRuntime:
         self.stop = threading.Event()
         self.thread = None
         self.failure = None
+        self.last_attempt_at = None
+        self.last_success_at = None
+        self.last_provider_as_of = None
+        self.last_inserted = None
         self._writer = threading.Lock()
 
         if not self.enabled:
@@ -134,6 +138,7 @@ class ResearchUS2YRuntime:
             return {"status": "COLLECTION_DISABLED"}
         
         now = self.clock()
+        self.last_attempt_at = stamp(now)
 
         if now.tzinfo is None or now.utcoffset() is None:
             return {"status": "INVALID_CLOCK"}
@@ -174,6 +179,9 @@ class ResearchUS2YRuntime:
                     inserted = conn.total_changes - before
 
             self.failure = None
+            self.last_success_at = stamp(now)
+            self.last_provider_as_of = result["as_of"]
+            self.last_inserted = inserted
 
             return {
                 "status": "COMPLETE",
@@ -272,6 +280,11 @@ class ResearchUS2YRuntime:
             "channel": "us2y",
             "symbol": "US2Y",
             "last_attempt_status": self.failure or "COMPLETE",
+            "last_attempt_at": self.last_attempt_at,
+            "last_success_at": self.last_success_at,
+            "last_provider_as_of": self.last_provider_as_of,
+            "last_inserted": self.last_inserted,
+            "last_stored_retrieved_at": latest["retrieved_at"],
         }
 
     def start(self):
