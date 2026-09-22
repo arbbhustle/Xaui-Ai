@@ -158,6 +158,13 @@ def research_view(runtime, research_runtime, now):
             "age_seconds": us2y_status.get(
                 "age_seconds"
             ),
+            "last_observed_at": us2y_status.get("last_observed_at"),
+            "last_attempt_status": us2y_status.get("last_attempt_status"),
+            "last_attempt_at": us2y_status.get("last_attempt_at"),
+            "last_success_at": us2y_status.get("last_success_at"),
+            "last_provider_as_of": us2y_status.get("last_provider_as_of"),
+            "last_inserted": us2y_status.get("last_inserted"),
+            "last_stored_retrieved_at": us2y_status.get("last_stored_retrieved_at"),
         },
     }
 
