@@ -102,7 +102,15 @@ class Runtime:
                               'phase3b_context','meta_decisions','meta_outcomes','meta_position_events'):
                     for operation in ('UPDATE','DELETE'):
                         conn.execute(f"CREATE TRIGGER IF NOT EXISTS immutable_{table}_{operation} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT,'immutable evidence'); END")
-                if conn.execute("SELECT 1 FROM forward_cycles WHERE status!='COMPLETE'").fetchone():
+                # A CAPTURED cycle is durable recovery state, not database corruption.
+                # ForwardRunner._once() already calls _recover() before starting a new
+                # acquisition cycle. Allow startup to reach the single-owner collector,
+                # which deterministically completes any captured cycle from its archived
+                # capture without making a provider request.
+                pending = conn.execute(
+                    "SELECT status FROM forward_cycles WHERE status!='COMPLETE'"
+                ).fetchall()
+                if any(row[0] != 'CAPTURED' for row in pending):
                     raise RuntimeError('PENDING_RECOVERY_REQUIRES_OFFLINE_REVIEW')
             # Read-only replay audit: do not alter decisions or invoke collection on restart.
             with self.store.connect() as conn:
