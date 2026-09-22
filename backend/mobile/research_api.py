@@ -101,10 +101,14 @@ def latest_xau_candidate(runtime, now):
 
             value = checked_research_decision(row["payload"])
 
-    errors = research_xau_freshness_errors(
-        value.get("source_candle_closes", {}),
-        now,
-    )
+    # The immutable evaluation already performed interval-specific freshness
+    # validation against its own captured observed_at. Do not re-evaluate those
+    # candle closes against API wall-clock time: higher-timeframe candles (15m,
+    # 1h, 4h) are expected to be older between closes and would otherwise be
+    # falsely marked stale while the live 1m feed is healthy.
+    #
+    # Current feed freshness is exposed separately through collector.status()
+    # below and remains fail-closed in the collector/evaluation pipeline.
 
     # Do not re-gate a completed immutable evaluation with the collector's
     # *current* process status. The evaluation already carries the causal data
@@ -114,9 +118,7 @@ def latest_xau_candidate(runtime, now):
     # that older evaluation.
     xau_status = runtime.collector.status(now)
 
-    value["veto_codes"] = sorted(
-        set(value.get("veto_codes", []) + errors)
-    )
+    value["veto_codes"] = sorted(set(value.get("veto_codes", [])))
 
     value["research_xau_provenance"] = {
         "provider": "Twelve Data",
