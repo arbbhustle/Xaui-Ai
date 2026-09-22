@@ -30,6 +30,23 @@ IGNORED_RESEARCH_VETOES = {
     # Research exists specifically to collect forward evidence before
     # the normal calibration requirement has been satisfied.
     "INSUFFICIENT_CALIBRATION",
+
+    # XAU-only intraday research uses the 5m entry engine with 15m as the
+    # hard confirmation timeframe. 1h/4h remain useful context, but making
+    # both hard vetoes caused otherwise valid intraday candidates to be
+    # suppressed by much slower candles.
+    "TIMEFRAME_DISAGREEMENT:1h",
+    "TIMEFRAME_DISAGREEMENT:4h",
+
+    # Phase-3 hidden-state heuristics are experimental overlays. They remain
+    # visible in the archived Champion evidence, but they must not hard-gate
+    # the isolated XAU-only research profile.
+    "HIGH_MARKET_ENTROPY",
+    "EXTREME_TIMEFRAME_TENSION",
+    "MARKET_SHOCK",
+    "UNRESOLVED_EVENT_SHOCK",
+    "UNSTABLE_HIDDEN_STATE",
+    "HIDDEN_COUNCIL_CONFLICT",
 }
 
 
