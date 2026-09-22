@@ -12,7 +12,7 @@ from datetime import timedelta
 from ..domain import parse, stamp
 
 
-PROFILE = "XAU_US2Y_RESEARCH_V1"
+PROFILE = "XAU_ONLY_RESEARCH_V1"
 
 US2Y_FRESHNESS_SECONDS = 900
 US2Y_MOMENTUM_SECONDS = 3600
@@ -235,21 +235,6 @@ def compose_research_signal(xau_decision, us2y_rows, now):
     us2y = us2y_momentum(us2y_rows, now)
     result["us2y"] = us2y
 
-    if us2y["status"] != "READY":
-        result["veto_codes"].append(
-            "US2Y_NOT_READY"
-        )
-
-    elif candidate in ("BUY", "SELL"):
-        if us2y["bias"] == "NEUTRAL":
-            result["veto_codes"].append(
-                "US2Y_NEUTRAL"
-            )
-
-        elif us2y["bias"] != candidate:
-            result["veto_codes"].append(
-                "US2Y_CONFLICT"
-            )
 
     result["veto_codes"] = sorted(
         set(result["veto_codes"])
@@ -261,15 +246,15 @@ def compose_research_signal(xau_decision, us2y_rows, now):
             f"{candidate} RESEARCH SETUP"
         )
         result["reasons"].append(
-            "XAU technical candidate and US2Y 1-hour momentum agree."
+            "XAU technical candidate passed the XAU-only research gates."
         )
     else:
         result["reasons"].append(
-            "Research setup blocked until XAU and US2Y conditions agree."
+            "Research setup blocked by XAU technical conditions."
         )
 
     result["reasons"].append(
-        "US2Y confirmation is an unvalidated research heuristic, not established predictive edge."
+        "XAU-only research test; US2Y does not gate this signal."
     )
 
     return result
