@@ -231,7 +231,8 @@ def create_app(
 
     def runtime():
         result=app.state.runtime
-        result.store.verify()  # No caching of integrity or source freshness.
+        # Integrity is verified at startup and around collector cycles. HTTP reads
+        # must stay read-only and responsive while collection owns the database.
         return result
 
     @app.get('/health')
