@@ -207,19 +207,6 @@ def compose_research_signal(xau_decision, us2y_rows, now):
             "NO_XAU_TECHNICAL_CANDIDATE"
         )
 
-    expires_at = xau_decision.get("expires_at")
-
-    if expires_at:
-        try:
-            if now >= parse(expires_at):
-                result["veto_codes"].append(
-                    "XAU_SIGNAL_EXPIRED"
-                )
-        except (TypeError, ValueError, AttributeError):
-            result["veto_codes"].append(
-                "INVALID_XAU_EXPIRY"
-            )
-
     technical_blocks = [
         code
         for code in xau_decision.get("veto_codes", [])
@@ -231,6 +218,24 @@ def compose_research_signal(xau_decision, us2y_rows, now):
     )
 
     result["veto_codes"].extend(technical_blocks)
+
+    # Expiry is an execution gate for an otherwise actionable technical setup.
+    # When the current evaluation is already blocked by technical conditions,
+    # reporting expiry as an additional cause is misleading: the setup is not
+    # actionable regardless of its clock. Keep malformed expiry fail-closed for
+    # candidates that otherwise pass the technical gates.
+    if candidate in ("BUY", "SELL") and not technical_blocks:
+        expires_at = xau_decision.get("expires_at")
+        if expires_at:
+            try:
+                if now >= parse(expires_at):
+                    result["veto_codes"].append(
+                        "XAU_SIGNAL_EXPIRED"
+                    )
+            except (TypeError, ValueError, AttributeError):
+                result["veto_codes"].append(
+                    "INVALID_XAU_EXPIRY"
+                )
 
     us2y = us2y_momentum(us2y_rows, now)
     result["us2y"] = us2y
