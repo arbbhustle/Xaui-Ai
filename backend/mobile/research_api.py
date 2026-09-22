@@ -41,44 +41,65 @@ def checked_research_decision(payload):
 
 
 def latest_xau_candidate(runtime, now):
+    # Every completed forward cycle writes its evaluated champion result to the
+    # immutable DECISION ledger, even when the strategy's signal candle has not
+    # advanced enough to create a new row in the deduplicated decisions table.
+    # Research must use that current evaluation rather than an older 5m decision.
     with runtime.read() as conn:
-        row = conn.execute(
+        ledger = conn.execute(
             """
-            SELECT d.*
-            FROM decisions d
-            JOIN snapshots s ON s.id=d.snapshot_id
-            WHERE s.observed_at<=?
-            ORDER BY d.candle_close DESC
+            SELECT payload_id, at
+            FROM forward_ledger
+            WHERE kind='DECISION' AND at<=?
+            ORDER BY seq DESC
             LIMIT 1
             """,
             (stamp(now),),
         ).fetchone()
 
-        if not row:
-            return None
+        if ledger:
+            event = runtime.store.get(conn, ledger["payload_id"])
+            value = deepcopy(event.get("champion") or {})
+            snapshot_id = event.get("snapshot_id")
 
-        decision = checked_research_decision(row["payload"])
+            if not value or not snapshot_id:
+                raise ValueError("MISSING_XAU_LEDGER_EVALUATION")
 
-        snapshot_row = conn.execute(
-            "SELECT payload FROM snapshots WHERE id=?",
-            (row["snapshot_id"],),
-        ).fetchone()
+            snapshot_row = conn.execute(
+                "SELECT payload FROM snapshots WHERE id=?",
+                (snapshot_id,),
+            ).fetchone()
 
-        if not snapshot_row:
-            raise ValueError("MISSING_XAU_SNAPSHOT")
+            if not snapshot_row:
+                raise ValueError("MISSING_XAU_SNAPSHOT")
 
-        snapshot = json.loads(snapshot_row[0])
+            snapshot = json.loads(snapshot_row[0])
 
-        if digest(snapshot) != row["snapshot_id"]:
-            raise ValueError("XAU_SNAPSHOT_INTEGRITY_FAILURE")
+            if digest(snapshot) != snapshot_id:
+                raise ValueError("XAU_SNAPSHOT_INTEGRITY_FAILURE")
 
-        if parse(snapshot["observed_at"]) > now:
-            raise ValueError("FUTURE_XAU_SNAPSHOT")
+            if parse(snapshot["observed_at"]) > now:
+                raise ValueError("FUTURE_XAU_SNAPSHOT")
 
-        if parse(decision["timestamp_utc"]) > now:
-            raise ValueError("FUTURE_XAU_DECISION")
+            if value.get("timestamp_utc") and parse(value["timestamp_utc"]) > now:
+                raise ValueError("FUTURE_XAU_DECISION")
+        else:
+            row = conn.execute(
+                """
+                SELECT d.*
+                FROM decisions d
+                JOIN snapshots s ON s.id=d.snapshot_id
+                WHERE s.observed_at<=?
+                ORDER BY d.candle_close DESC
+                LIMIT 1
+                """,
+                (stamp(now),),
+            ).fetchone()
 
-    value = deepcopy(decision)
+            if not row:
+                return None
+
+            value = checked_research_decision(row["payload"])
 
     errors = research_xau_freshness_errors(
         value.get("source_candle_closes", {}),
