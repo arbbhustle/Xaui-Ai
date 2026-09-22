@@ -142,6 +142,14 @@ def research_view(runtime, research_runtime, now):
             ),
             "symbol": "XAU/USD",
             "vendor": "twelve_data",
+            "age_seconds": xau_status.get("age_seconds"),
+            "last_observed_at": xau_status.get("last_observed_at"),
+            "received_at": xau_status.get("received_at"),
+            "last_attempt_status": xau_status.get("last_attempt_status"),
+            "approval": xau_status.get("approval"),
+            "data_mode": xau_status.get("data_mode"),
+            "credential_configured": xau_status.get("credential_configured"),
+            "validation_checks": xau_status.get("validation_checks", []),
         },
         "us2y": {
             "status": us2y_status.get(
