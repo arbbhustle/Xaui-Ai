@@ -106,10 +106,13 @@ def latest_xau_candidate(runtime, now):
         now,
     )
 
+    # Do not re-gate a completed immutable evaluation with the collector's
+    # *current* process status. The evaluation already carries the causal data
+    # quality/provider vetoes from its own captured snapshot. A later status
+    # transition (for example cadence verification becoming healthy between the
+    # DECISION event and this API read) must not be retroactively attached to
+    # that older evaluation.
     xau_status = runtime.collector.status(now)
-
-    if xau_status.get("status") != "HEALTHY":
-        errors.append("XAU_PROVIDER_NOT_READY")
 
     value["veto_codes"] = sorted(
         set(value.get("veto_codes", []) + errors)
