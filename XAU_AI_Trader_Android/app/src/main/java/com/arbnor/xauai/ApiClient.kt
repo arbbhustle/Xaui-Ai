@@ -12,7 +12,8 @@ class ApiClient(private val transport: ((String) -> Any)? = null) {
     @Volatile private var activeConnection: HttpURLConnection? = null
     fun cancel() { activeConnection?.disconnect() }
     companion object {
-        const val DEFAULT_ENDPOINT = "https://dardania-xautrade-ai-v2.onrender.com/signal"
+        const val STRICT_ENDPOINT = "https://dardania-xautrade-ai-v2.onrender.com/signal"
+        const val DEFAULT_ENDPOINT = "https://dardania-xautrade-ai-v2.onrender.com/research-signal"
         fun signalEndpoint(address: String): String {
             val uri=validate(address.trim())
             return if(uri.path.isNullOrEmpty() || uri.path=="/") uri.resolve("/signal").toString() else uri.toString()
@@ -74,6 +75,11 @@ class ApiClient(private val transport: ((String) -> Any)? = null) {
         val signal = read(signalAddress) as? JSONObject ?: throw ApiFailure("Malformed signal response")
         if (Fields(signal).text("direction", "signal", "champion.direction") == null) throw ApiFailure("Signal response is missing a decision")
         val warnings = mutableListOf<String>()
+        // XAU+US2Y research is a self-contained current signal. Do not make the
+        // phone wait for Champion analytics/history endpoints that are unrelated
+        // to this research profile.
+        if (validate(signalAddress).path == "/research-signal")
+            return Dashboard(signal, signal.optJSONObject("performance"), emptyList(), Instant.now(), warnings)
         val performance = try { read(sibling(signalAddress, "performance")) as? JSONObject ?: throw ApiFailure("Malformed performance") }
             catch (_: Exception) { warnings.add("Performance unavailable for this sync"); null }
         val history = try {
