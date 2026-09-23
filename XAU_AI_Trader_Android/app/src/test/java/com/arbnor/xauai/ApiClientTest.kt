@@ -6,6 +6,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ApiClientTest {
+    @Test fun researchEndpointIsSingleRequestFastPath() {
+        val urls=mutableListOf<String>()
+        val api=ApiClient { url ->
+            urls.add(url)
+            JSONObject().put("direction","SELL").put("xau",JSONObject()
+                .put("signal_candle_close","2026-09-23T17:15:00Z")
+                .put("expires_at","2026-09-23T17:20:00Z"))
+        }
+        val data=api.fetch(ApiClient.DEFAULT_ENDPOINT)
+        assertEquals("SELL",data.signal.getString("direction"))
+        assertEquals(listOf(ApiClient.DEFAULT_ENDPOINT),urls)
+        assertTrue(data.warnings.isEmpty())
+    }
     @Test fun optionalFailuresDoNotDiscardSignal() {
         val api=ApiClient { url -> if(url.endsWith("signal")) JSONObject().put("direction","SELL") else throw ApiFailure("Unavailable") }
         val data=api.fetch(ApiClient.DEFAULT_ENDPOINT)
