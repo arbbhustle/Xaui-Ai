@@ -156,6 +156,23 @@ def research_view(runtime, research_runtime, now):
     result["automatic_promotion"] = False
     result["promotion"] = "PROMOTION_INELIGIBLE"
 
+    # Research readiness is intentionally XAU-only. The strict /signal
+    # readiness still requires every critical provider, but this isolated
+    # research profile must not report NOT_READY merely because US2Y or the
+    # strict macro stack is unavailable.
+    xau_ready = (
+        xau_status.get("status") == "HEALTHY"
+        and xau_status.get("freshness") == "FRESH"
+        and xau_status.get("approval") == "APPROVED_CONFIGURATION"
+    )
+    result["readiness"] = {
+        "status": "DATA_READY" if xau_ready else "NOT_READY",
+        "scope": "XAU_ONLY_RESEARCH",
+        "reasons": [] if xau_ready else ["XAU_PROVIDER_NOT_READY"],
+    }
+    result["data_status"] = "FRESH_XAU_RESEARCH" if xau_ready else "UNAVAILABLE"
+    result["data_mode"] = "RESEARCH_PROVIDER_DATA" if xau_ready else "UNAVAILABLE"
+
     result["provider_health"] = {
         "xau": {
             "status": xau_status.get(
