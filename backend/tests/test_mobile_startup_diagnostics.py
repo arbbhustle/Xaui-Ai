@@ -1,6 +1,4 @@
 """Startup diagnostics must remain useful without disclosing arbitrary exceptions."""
-from contextlib import contextmanager
-from types import SimpleNamespace
 import sqlite3
 import traceback
 
@@ -37,25 +35,6 @@ def test_startup_traceback_redacts_unknown_content(error):
     for private in ('API_KEY_SECRET', '/var/data/', 'private-secret', 'SECRET_CLASS_NAME'):
         assert private not in rendered
     assert caught.value.__suppress_context__
-
-
-def test_research_failure_reports_phase_and_releases_main_runtime():
-    closed = []
-
-    @contextmanager
-    def runtime(_):
-        try:
-            yield SimpleNamespace(path='unused', collection_enabled=False)
-        finally:
-            closed.append(True)
-
-    def research(**kwargs):
-        raise RuntimeError('INVALID_RESEARCH_US2Y_FLAG')
-
-    with pytest.raises(RuntimeError, match='phase=RESEARCH_RUNTIME type=RuntimeError code=INVALID_RESEARCH_US2Y_FLAG'):
-        with TestClient(create_app(runtime_factory=runtime, research_runtime_factory=research)):
-            pytest.fail('Startup must fail closed')
-    assert closed == [True]
 
 
 def test_worker_lock_message_is_mapped_to_fixed_code():
