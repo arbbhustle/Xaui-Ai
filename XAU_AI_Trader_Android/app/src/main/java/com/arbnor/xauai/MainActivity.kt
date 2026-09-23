@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity() {
     private val pulse = object : Runnable {
         override fun run() {
             if (!active) return
-            if (System.currentTimeMillis()-lastRequest >= 60000 && !fetching && page != 3) sync()
+            if (System.currentTimeMillis()-lastRequest >= 30000 && !fetching && page != 3) sync()
             else if (page == 0) render(true)
             handler.postDelayed(this,15000)
         }
