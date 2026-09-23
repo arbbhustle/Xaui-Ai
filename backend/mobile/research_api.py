@@ -1,4 +1,4 @@
-"""Read-only XAU + US2Y research API projection.
+"""Read-only XAU research API projection.
 
 RESEARCH / DEMO ONLY.
 The normal /signal champion remains unchanged.
@@ -221,25 +221,15 @@ def research_history(runtime, now, limit=30):
 
 
 def research_view(runtime, research_runtime, now):
-    """Produce current XAU + US2Y research signal without altering champion."""
+    """Produce current XAU-only research signal without altering champion."""
 
     xau = latest_xau_candidate(runtime, now)
 
-    us2y_rows = research_runtime.snapshot(
-        now=now,
-        limit=120,
-    )
-
-    result = compose_research_signal(
-        xau,
-        us2y_rows,
-        now,
-    )
+    result = compose_research_signal(xau, now)
 
     xau_status = runtime.collector.status(now)
-    us2y_status = research_runtime.status(now)
 
-    result["mode"] = "XAU_US2Y_RESEARCH_ONLY"
+    result["mode"] = "XAU_ONLY_RESEARCH"
     result["strict_signal_unchanged"] = True
     result["automatic_promotion"] = False
     result["promotion"] = "PROMOTION_INELIGIBLE"
@@ -281,30 +271,7 @@ def research_view(runtime, research_runtime, now):
             "data_mode": xau_status.get("data_mode"),
             "credential_configured": xau_status.get("credential_configured"),
             "validation_checks": xau_status.get("validation_checks", []),
-        },
-        "us2y": {
-            "status": us2y_status.get(
-                "status",
-                "UNAVAILABLE",
-            ),
-            "freshness": us2y_status.get(
-                "freshness",
-                "UNAVAILABLE",
-            ),
-            "symbol": "US2Y",
-            "vendor": "twelve_data",
-            "value": us2y_status.get("value"),
-            "age_seconds": us2y_status.get(
-                "age_seconds"
-            ),
-            "last_observed_at": us2y_status.get("last_observed_at"),
-            "last_attempt_status": us2y_status.get("last_attempt_status"),
-            "last_attempt_at": us2y_status.get("last_attempt_at"),
-            "last_success_at": us2y_status.get("last_success_at"),
-            "last_provider_as_of": us2y_status.get("last_provider_as_of"),
-            "last_inserted": us2y_status.get("last_inserted"),
-            "last_stored_retrieved_at": us2y_status.get("last_stored_retrieved_at"),
-        },
+        }
     }
 
     if xau:
