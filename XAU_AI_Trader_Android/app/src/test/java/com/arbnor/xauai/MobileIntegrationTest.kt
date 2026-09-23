@@ -40,7 +40,7 @@ class MobileIntegrationTest {
     }
 
     @Test fun defaultUsesVerifiedModernBackend() {
-        assertEquals("https://dardania-xautrade-ai-v2.onrender.com/signal",ApiClient.DEFAULT_ENDPOINT)
+        assertEquals("https://dardania-xautrade-ai-v2.onrender.com/research-signal",ApiClient.DEFAULT_ENDPOINT)
     }
 
     @Test fun localModernApiResponsesParseThroughProductionModels() {
