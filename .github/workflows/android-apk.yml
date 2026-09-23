@@ -1,0 +1,37 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "XAU_AI_Trader_Android/**"
+      - ".github/workflows/android-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: XAU_AI_Trader_Android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: Unit tests
+        run: gradle testDebugUnitTest --stacktrace
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DardaniaXAUTRADE-v3-debug
+          path: XAU_AI_Trader_Android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
