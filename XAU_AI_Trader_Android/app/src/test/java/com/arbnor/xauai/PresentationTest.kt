@@ -33,6 +33,16 @@ class PresentationTest {
     @Test fun invalidConfidenceUnavailable() { for(v in listOf(-1,101,"NaN",JSONObject.NULL)) assertEquals(Presentation.MISSING,Presentation.confidence(signal().put("confidence",v))) }
     @Test fun legacyLiveLabelIsNotProof() { assertFalse(Presentation.dataMode(signal().put("data_status","LIVE_DATA"),now).startsWith("LIVE_DATA")) }
     @Test fun malformedTimestampNeverLive() { assertTrue(Presentation.dataMode(signal().put("timestamp_utc","bad"),now).startsWith("STALE")) }
+    @Test fun researchFreshnessUsesBackendProviderHealthNotPhoneClock() {
+        val root=signal().put("profile","XAU_ONLY_RESEARCH_V1")
+            .put("timestamp_utc",now.plusSeconds(2).toString())
+            .put("readiness",JSONObject().put("status","DATA_READY"))
+            .put("provider_health",JSONObject().put("xau",JSONObject().put("status","HEALTHY").put("freshness","FRESH")))
+        assertFalse(Presentation.stale(root,now))
+        assertEquals("FRESH XAU · research",Presentation.dataMode(root,now))
+        root.getJSONObject("provider_health").getJSONObject("xau").put("freshness","STALE")
+        assertTrue(Presentation.stale(root,now))
+    }
     @Test fun futureTimestampNeverLive() { assertTrue(Presentation.stale(signal().put("timestamp_utc",now.plusSeconds(1)),now)) }
     @Test fun staleDataAgesWithoutAnotherRequest() { assertTrue(Presentation.stale(signal(),now.plusSeconds(301))); assertFalse(Presentation.stale(signal(),now)) }
     @Test fun expiredAndOfflinePlansWithheld() {
