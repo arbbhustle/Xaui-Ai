@@ -4,6 +4,16 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -73,6 +83,23 @@ class MainActivity : AppCompatActivity() {
         }
         root.doOnAttach { ViewCompat.requestApplyInsets(it) }
         render()
+        enableSignalNotifications()
+    }
+
+    private fun enableSignalNotifications() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2001)
+        }
+        val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+        val work = PeriodicWorkRequestBuilder<SignalSyncWorker>(15, TimeUnit.MINUTES)
+            .setConstraints(constraints)
+            .build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            SignalSyncWorker.UNIQUE_WORK,
+            ExistingPeriodicWorkPolicy.UPDATE,
+            work
+        )
     }
     override fun onStart() { super.onStart(); active=true; sync(); handler.postDelayed(pulse,15000) }
     override fun onStop() {
