@@ -7,8 +7,6 @@ No broker execution.
 No profitability claim.
 """
 
-from datetime import timedelta
-
 from ..domain import parse, stamp
 
 
@@ -55,123 +53,6 @@ def _research_ignored_veto(code):
         code in IGNORED_RESEARCH_VETOES
         or any(code.startswith(prefix) for prefix in IGNORED_RESEARCH_PREFIXES)
     )
-
-
-def us2y_momentum(rows, now):
-    """Return causal 1-hour US2Y momentum using observations known by now."""
-
-    eligible = []
-
-    for row in rows:
-        try:
-            observed = parse(row["observed_at"])
-            retrieved = parse(row["retrieved_at"])
-            value = float(row["value"])
-
-            if observed > now or retrieved > now:
-                continue
-
-            if observed > retrieved:
-                continue
-
-            eligible.append(
-                {
-                    "observed_at": observed,
-                    "retrieved_at": retrieved,
-                    "value": value,
-                }
-            )
-        except (KeyError, TypeError, ValueError, AttributeError):
-            continue
-
-    eligible.sort(key=lambda row: row["observed_at"])
-
-    if not eligible:
-        return {
-            "status": "UNAVAILABLE",
-            "bias": "UNAVAILABLE",
-            "change_bps": None,
-            "age_seconds": None,
-            "reason": "NO_US2Y_DATA",
-        }
-
-    latest = eligible[-1]
-    age = (now - latest["observed_at"]).total_seconds()
-
-    if not 0 <= age < US2Y_FRESHNESS_SECONDS:
-        return {
-            "status": "STALE",
-            "bias": "UNAVAILABLE",
-            "change_bps": None,
-            "age_seconds": age,
-            "latest_at": stamp(latest["observed_at"]),
-            "latest_value": latest["value"],
-            "reason": "STALE_US2Y_DATA",
-        }
-
-    target = latest["observed_at"] - timedelta(
-        seconds=US2Y_MOMENTUM_SECONDS
-    )
-
-    anchors = [
-        row for row in eligible
-        if row["observed_at"] <= target
-    ]
-
-    if not anchors:
-        return {
-            "status": "INSUFFICIENT_HISTORY",
-            "bias": "UNAVAILABLE",
-            "change_bps": None,
-            "age_seconds": age,
-            "latest_at": stamp(latest["observed_at"]),
-            "latest_value": latest["value"],
-            "reason": "MISSING_US2Y_MOMENTUM_HISTORY",
-        }
-
-    anchor = anchors[-1]
-    anchor_gap = (target - anchor["observed_at"]).total_seconds()
-
-    if anchor_gap > US2Y_ANCHOR_TOLERANCE_SECONDS:
-        return {
-            "status": "INSUFFICIENT_HISTORY",
-            "bias": "UNAVAILABLE",
-            "change_bps": None,
-            "age_seconds": age,
-            "latest_at": stamp(latest["observed_at"]),
-            "latest_value": latest["value"],
-            "anchor_at": stamp(anchor["observed_at"]),
-            "anchor_value": anchor["value"],
-            "reason": "US2Y_HISTORY_GAP",
-        }
-
-    change_bps = round(
-        (latest["value"] - anchor["value"]) * 100,
-        4,
-    )
-
-    # Falling yields are treated only as a research confirmation for gold BUY.
-    # Rising yields are treated only as a research confirmation for gold SELL.
-    if change_bps <= -US2Y_CONFIRM_THRESHOLD_BPS:
-        bias = "BUY"
-    elif change_bps >= US2Y_CONFIRM_THRESHOLD_BPS:
-        bias = "SELL"
-    else:
-        bias = "NEUTRAL"
-
-    return {
-        "status": "READY",
-        "bias": bias,
-        "change_bps": change_bps,
-        "age_seconds": age,
-        "latest_at": stamp(latest["observed_at"]),
-        "latest_value": latest["value"],
-        "anchor_at": stamp(anchor["observed_at"]),
-        "anchor_value": anchor["value"],
-        "window_seconds": US2Y_MOMENTUM_SECONDS,
-        "threshold_bps": US2Y_CONFIRM_THRESHOLD_BPS,
-        "reason": "US2Y_1H_MOMENTUM_RESEARCH_HEURISTIC",
-    }
 
 
 def compose_research_signal(xau_decision, now):
