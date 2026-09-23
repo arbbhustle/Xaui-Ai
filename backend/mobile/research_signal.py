@@ -1,4 +1,4 @@
-"""XAU + US2Y isolated research signal.
+"""XAU-only isolated research signal.
 
 This module is intentionally separate from the production/champion policy.
 
@@ -13,15 +13,6 @@ from ..domain import parse, stamp
 
 
 PROFILE = "XAU_ONLY_RESEARCH_V1"
-
-US2Y_FRESHNESS_SECONDS = 900
-US2Y_MOMENTUM_SECONDS = 3600
-US2Y_ANCHOR_TOLERANCE_SECONDS = 600
-
-# US2Y is quoted in percentage points.
-# 0.01 percentage point = 1 basis point.
-US2Y_CONFIRM_THRESHOLD_BPS = 1.0
-
 
 IGNORED_RESEARCH_VETOES = {
     "MISSING_CRITICAL_EVENT_DATA",
@@ -183,8 +174,8 @@ def us2y_momentum(rows, now):
     }
 
 
-def compose_research_signal(xau_decision, us2y_rows, now):
-    """Combine XAU technical candidate with US2Y research confirmation."""
+def compose_research_signal(xau_decision, now):
+    """Project the XAU technical candidate into the isolated research profile."""
 
     result = {
         "profile": PROFILE,
@@ -199,7 +190,6 @@ def compose_research_signal(xau_decision, us2y_rows, now):
         "timestamp_utc": stamp(now),
         "candidate_direction": "NO_TRADE",
         "entry": None,
-        "us2y": None,
         "veto_codes": [],
         "reasons": [],
     }
@@ -254,9 +244,6 @@ def compose_research_signal(xau_decision, us2y_rows, now):
                     "INVALID_XAU_EXPIRY"
                 )
 
-    us2y = us2y_momentum(us2y_rows, now)
-    result["us2y"] = us2y
-
 
     result["veto_codes"] = sorted(
         set(result["veto_codes"])
@@ -274,9 +261,5 @@ def compose_research_signal(xau_decision, us2y_rows, now):
         result["reasons"].append(
             "Research setup blocked by XAU technical conditions."
         )
-
-    result["reasons"].append(
-        "XAU-only research test; US2Y does not gate this signal."
-    )
 
     return result
