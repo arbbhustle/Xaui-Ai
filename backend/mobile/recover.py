@@ -57,18 +57,11 @@ def recover(database=None, apply=False):
             trial = Path(work) / 'trial.sqlite3'
             backup(owner.path, original)
             backup(original, trial)
-            reviewed = Runtime(trial)
-            try:
-                reviewed.__enter__()
-            except RuntimeError as exc:
-                if exc.args != ('PENDING_RECOVERY_REQUIRES_OFFLINE_REVIEW',):
-                    raise
-            else:
-                reviewed.__exit__()
-                raise RuntimeError('RECOVERY_PENDING_STATE_CHANGED')
-            # __enter__ verified storage and exact engine/configuration identity.
-            # It released its lock on the expected pending-cycle refusal.
-            with reviewed.lock:
+            # Runtime startup now accepts CAPTURED cycles so the normal single-owner
+            # collector can deterministically recover them. For explicit offline
+            # recovery, open the trial copy normally and replay only its archived
+            # captures; provider reads and scheduler startup remain disabled.
+            with Runtime(trial) as reviewed:
                 MobileCollector(reviewed)._recover()
             # Normal startup validates every stored decision and challenger replay.
             with Runtime(trial) as verified:
