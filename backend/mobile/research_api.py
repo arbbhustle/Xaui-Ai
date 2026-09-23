@@ -132,6 +132,94 @@ def latest_xau_candidate(runtime, now):
     return value
 
 
+def research_history(runtime, now, limit=30):
+    """Project immutable XAU research setups without mixing Champion history.
+
+    Only actionable BUY/SELL evaluations are shown. This is evidence history,
+    not a second strategy and not a source of broker execution.
+    """
+    items = []
+    seen = set()
+
+    with runtime.read() as conn:
+        rows = conn.execute(
+            """
+            SELECT seq, at, payload_id
+            FROM forward_ledger
+            WHERE kind='DECISION' AND at<=?
+            ORDER BY seq DESC
+            LIMIT 500
+            """,
+            (stamp(now),),
+        ).fetchall()
+
+        for row in rows:
+            event = runtime.store.get(conn, row["payload_id"])
+            decision = event.get("champion") or {}
+            if not isinstance(decision, dict):
+                continue
+
+            direction = decision.get("candidate_direction")
+            if direction not in ("BUY", "SELL"):
+                continue
+
+            technical_blocks = sorted({
+                code
+                for code in decision.get("veto_codes", [])
+                if not str(code).startswith((
+                    "MISSING_CRITICAL_INTELLIGENCE:",
+                    "STALE_INTELLIGENCE:",
+                    "FUTURE_INTELLIGENCE:",
+                    "CONFLICTING_HIGH_IMPACT_SOURCES:",
+                    "PROVIDER_NOT_READY:",
+                ))
+                and code not in {
+                    "MISSING_CRITICAL_EVENT_DATA",
+                    "MACRO_PROVIDER_FAILURE",
+                    "INSUFFICIENT_CALIBRATION",
+                    "TIMEFRAME_DISAGREEMENT:1h",
+                    "TIMEFRAME_DISAGREEMENT:4h",
+                    "HIGH_MARKET_ENTROPY",
+                    "EXTREME_TIMEFRAME_TENSION",
+                    "MARKET_SHOCK",
+                    "UNRESOLVED_EVENT_SHOCK",
+                    "UNSTABLE_HIDDEN_STATE",
+                    "HIDDEN_COUNCIL_CONFLICT",
+                }
+            })
+            if technical_blocks:
+                continue
+
+            signal_close = decision.get("signal_candle_close")
+            expires_at = decision.get("expires_at")
+            key = (direction, signal_close, expires_at)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            items.append({
+                "source": "XAU_ONLY_RESEARCH_V1",
+                "execution": "DEMO_ONLY",
+                "direction": direction,
+                "entry": decision.get("entry"),
+                "timestamp_utc": signal_close or row["at"],
+                "signal_candle_close": signal_close,
+                "expires_at": expires_at,
+                "buy_score": decision.get("buy_score"),
+                "sell_score": decision.get("sell_score"),
+                "status": "RECORDED_RESEARCH_SETUP",
+                "cursor": row["seq"],
+            })
+            if len(items) >= limit:
+                break
+
+    return {
+        "items": items,
+        "source": "XAU_ONLY_RESEARCH_V1",
+        "execution": "DEMO_ONLY",
+    }
+
+
 def research_view(runtime, research_runtime, now):
     """Produce current XAU + US2Y research signal without altering champion."""
 
@@ -245,6 +333,11 @@ def research_view(runtime, research_runtime, now):
                 "NO_XAU_DECISION"
             ],
         }
+
+    # Embed a small, read-only research history in the same response so the
+    # phone keeps its fast single-request Home sync. Champion /history and
+    # /performance remain isolated and are never mixed into this profile.
+    result["research_history"] = research_history(runtime, now, limit=30)
 
     result["served_at"] = stamp(now)
 
