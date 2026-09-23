@@ -97,31 +97,33 @@ def test_xau_sell_and_us2y_sell_create_research_setup():
     assert result["veto_codes"] == []
 
 
-def test_us2y_conflict_blocks_research_trade():
+def test_us2y_conflict_is_diagnostic_only_for_xau_research():
     result = compose_research_signal(
         xau_candidate("BUY"),
         us2y_rows(2.0),
         NOW,
     )
 
-    assert result["direction"] == "NO_TRADE"
-    assert "US2Y_CONFLICT" in result["veto_codes"]
+    assert result["direction"] == "BUY"
+    assert result["us2y"]["bias"] == "SELL"
+    assert "US2Y_CONFLICT" not in result["veto_codes"]
 
 
-def test_us2y_neutral_blocks_research_trade():
+def test_us2y_neutral_is_diagnostic_only_for_xau_research():
     result = compose_research_signal(
         xau_candidate("BUY"),
         us2y_rows(0.5),
         NOW,
     )
 
-    assert result["direction"] == "NO_TRADE"
-    assert "US2Y_NEUTRAL" in result["veto_codes"]
+    assert result["direction"] == "BUY"
+    assert result["us2y"]["bias"] == "NEUTRAL"
+    assert "US2Y_NEUTRAL" not in result["veto_codes"]
 
 
 def test_real_xau_technical_veto_is_not_ignored():
     xau = xau_candidate("BUY")
-    xau["veto_codes"].append("TIMEFRAME_DISAGREEMENT:4h")
+    xau["veto_codes"].append("TIMEFRAME_DISAGREEMENT:15m")
 
     result = compose_research_signal(
         xau,
@@ -130,7 +132,7 @@ def test_real_xau_technical_veto_is_not_ignored():
     )
 
     assert result["direction"] == "NO_TRADE"
-    assert "TIMEFRAME_DISAGREEMENT:4h" in result["veto_codes"]
+    assert "TIMEFRAME_DISAGREEMENT:15m" in result["veto_codes"]
 
 
 def test_expired_xau_candidate_is_blocked():
@@ -147,7 +149,7 @@ def test_expired_xau_candidate_is_blocked():
     assert "XAU_SIGNAL_EXPIRED" in result["veto_codes"]
 
 
-def test_missing_us2y_history_is_blocked():
+def test_missing_us2y_history_is_diagnostic_only():
     latest = NOW - timedelta(minutes=1)
 
     rows = [
@@ -165,5 +167,6 @@ def test_missing_us2y_history_is_blocked():
         NOW,
     )
 
-    assert result["direction"] == "NO_TRADE"
-    assert "US2Y_NOT_READY" in result["veto_codes"]
+    assert result["direction"] == "BUY"
+    assert result["us2y"]["status"] == "INSUFFICIENT_HISTORY"
+    assert "US2Y_NOT_READY" not in result["veto_codes"]
