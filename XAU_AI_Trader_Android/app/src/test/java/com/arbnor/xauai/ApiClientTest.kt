@@ -21,19 +21,19 @@ class ApiClientTest {
     }
     @Test fun optionalFailuresDoNotDiscardSignal() {
         val api=ApiClient { url -> if(url.endsWith("signal")) JSONObject().put("direction","SELL") else throw ApiFailure("Unavailable") }
-        val data=api.fetch(ApiClient.DEFAULT_ENDPOINT)
+        val data=api.fetch(ApiClient.STRICT_ENDPOINT)
         assertEquals("SELL",data.signal.getString("direction")); assertNull(data.performance); assertTrue(data.history.isEmpty()); assertEquals(3,data.warnings.size)
     }
     @Test fun embeddedPerformanceFallbackSupported() {
         val api=ApiClient { url -> if(url.endsWith("signal")) JSONObject().put("direction","NO_TRADE").put("performance",JSONObject().put("wins",2)) else throw ApiFailure("Unavailable") }
-        assertEquals(2,api.fetch(ApiClient.DEFAULT_ENDPOINT).performance!!.getInt("wins"))
+        assertEquals(2,api.fetch(ApiClient.STRICT_ENDPOINT).performance!!.getInt("wins"))
     }
     @Test fun missingDecisionRejected() {
         try { ApiClient { JSONObject().put("error","unavailable") }.fetch(ApiClient.DEFAULT_ENDPOINT); fail() } catch(_: ApiFailure) { }
     }
     @Test fun malformedOptionalHistoryReported() {
         val api=ApiClient { url -> when { url.endsWith("signal")->JSONObject().put("direction","BUY"); else->JSONObject() } }
-        assertTrue(api.fetch(ApiClient.DEFAULT_ENDPOINT).warnings.any { it.contains("History") })
+        assertTrue(api.fetch(ApiClient.STRICT_ENDPOINT).warnings.any { it.contains("History") })
     }
     @Test fun bodyParsingRejectsTrailingOrPrimitiveContent() {
         for(body in listOf("{}garbage","null","false","23","{bad")) {
@@ -46,7 +46,7 @@ class ApiClientTest {
     @Test fun bracketsInStringsDoNotCountAsNesting() { assertTrue(ApiClient().parsePayload("{\"message\":\"${"[".repeat(40)}\"}") is JSONObject) }
     @Test fun historyOnlyUsesBackendSiblingEndpoints() {
         val urls=mutableListOf<String>()
-        ApiClient { url -> urls.add(url); if(url.endsWith("signal")) JSONObject().put("direction","NO_TRADE") else if(url.endsWith("history")) JSONArray() else JSONObject() }.fetch(ApiClient.DEFAULT_ENDPOINT)
+        ApiClient { url -> urls.add(url); if(url.endsWith("signal")) JSONObject().put("direction","NO_TRADE") else if(url.endsWith("history")) JSONArray() else JSONObject() }.fetch(ApiClient.STRICT_ENDPOINT)
         assertEquals(listOf("signal","performance","history","trades"),urls.map { it.substringAfterLast('/') })
         assertTrue(urls.all { it.startsWith("https://dardania-xautrade-ai-v2.onrender.com/") })
     }
