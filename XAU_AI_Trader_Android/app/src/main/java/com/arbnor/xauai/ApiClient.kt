@@ -78,8 +78,13 @@ class ApiClient(private val transport: ((String) -> Any)? = null) {
         // XAU+US2Y research is a self-contained current signal. Do not make the
         // phone wait for Champion analytics/history endpoints that are unrelated
         // to this research profile.
-        if (validate(signalAddress).path == "/research-signal")
-            return Dashboard(signal, signal.optJSONObject("performance"), emptyList(), Instant.now(), warnings)
+        if (validate(signalAddress).path == "/research-signal") {
+            // Keep the Home refresh to one request. Research history/analytics
+            // are a separate evidence surface and must never make current-signal
+            // polling slower.
+            val history = Presentation.history(signal.optJSONObject("research_history") ?: JSONObject())
+            return Dashboard(signal, signal.optJSONObject("research_performance"), history, Instant.now(), warnings)
+        }
         val performance = try { read(sibling(signalAddress, "performance")) as? JSONObject ?: throw ApiFailure("Malformed performance") }
             catch (_: Exception) { warnings.add("Performance unavailable for this sync"); null }
         val history = try {
