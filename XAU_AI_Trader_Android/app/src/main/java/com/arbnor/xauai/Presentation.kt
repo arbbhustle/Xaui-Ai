@@ -74,6 +74,17 @@ object Presentation {
         if (containsSynthetic(root)) return "TEST / FIXTURE · research only"
         if (!connected) return "OFFLINE · cached data"
         if (stale(root, now)) return "STALE / TIMESTAMP UNVERIFIED"
+        // The isolated research endpoint has a deliberately smaller trust
+        // boundary than strict /signal: XAU alone gates this profile. Respect
+        // the backend's explicit XAU-only readiness instead of demanding the
+        // six-provider strict stack in the generic verifier below.
+        if (f.text("profile") == "XAU_ONLY_RESEARCH_V1" &&
+            Fields(root).text("readiness.status") == "DATA_READY") {
+            val xau = Fields(root).obj("provider_health.xau")
+            if (xau?.optString("status") == "HEALTHY" &&
+                xau.optString("freshness") == "FRESH")
+                return "FRESH XAU · research"
+        }
         if (declared in setOf("HISTORICAL", "HISTORICAL_POINT_IN_TIME")) return "HISTORICAL"
         if (declared in setOf("DELAYED", "DELAYED_DATA")) return "DELAYED_DATA"
         // Legacy LIVE strings and HTTP success are insufficient evidence for this badge.
