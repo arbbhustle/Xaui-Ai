@@ -83,8 +83,10 @@ class MainActivity : AppCompatActivity() {
         }
         root.doOnAttach { ViewCompat.requestApplyInsets(it) }
         render()
-        enableSignalNotifications()
+        if (!isRunningUnderRobolectric()) enableSignalNotifications()
     }
+
+    private fun isRunningUnderRobolectric(): Boolean = android.os.Build.FINGERPRINT == "robolectric"
 
     private fun enableSignalNotifications() {
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
