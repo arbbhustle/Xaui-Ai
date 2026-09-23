@@ -30,9 +30,14 @@ class SignalSyncWorker(context: Context, params: WorkerParameters) : CoroutineWo
             if (direction != "BUY" && direction != "SELL") return@withContext Result.success()
 
             val fields = Fields(signal)
-            val timestamp = fields.text("timestamp_utc", "timestamp", "served_at") ?: return@withContext Result.success()
+            // research-signal.timestamp_utc/served_at changes on every API read, so it
+            // cannot identify a signal. Deduplicate on the originating XAU 5m setup.
+            val signalClose = fields.text("xau.signal_candle_close", "signal_candle_close")
+                ?: return@withContext Result.success()
+            val expiresAt = fields.text("xau.expires_at", "expires_at")
+                ?: return@withContext Result.success()
             val entry = fields.number("entry", "xau.entry")
-            val key = direction + "|" + timestamp + "|" + (entry?.toString() ?: "")
+            val key = direction + "|" + signalClose + "|" + expiresAt
             if (prefs.getString(LAST_NOTIFIED, null) == key) return@withContext Result.success()
 
             notifySignal(direction, entry)
