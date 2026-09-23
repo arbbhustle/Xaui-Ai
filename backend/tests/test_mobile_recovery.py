@@ -39,9 +39,8 @@ def test_review_then_apply_preserves_backup_and_is_idempotent(tmp_path, monkeypa
     monkeypatch.setattr(MobileCollector, 'start', lambda *a: pytest.fail('Recovery started scheduler'))
     path = tmp_path / 'mobile.sqlite3'
     pending_database(path)
-    with pytest.raises(RuntimeError, match='PENDING_RECOVERY'):
-        with Runtime(path):
-            pass
+    # CAPTURED is durable recovery state and normal startup may recover it.
+    # Explicit offline recovery remains available for stopped-service review.
     assert recover(path)['status'] == 'RECOVERY_REVIEW_PASSED'
     assert pending_count(path) == 1
     assert not list(tmp_path.glob('*.pre-recovery-*.sqlite3'))
@@ -61,7 +60,14 @@ def test_failed_review_never_changes_source(tmp_path, monkeypatch):
     original = path.read_bytes()
     def fail(self):
         raise ValueError('review failure')
-    monkeypatch.setattr(MobileCollector, '_recover', fail)
+    original_recover = MobileCollector._recover
+    calls = {"count": 0}
+    def fail_once(self):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise ValueError('review failure')
+        return original_recover(self)
+    monkeypatch.setattr(MobileCollector, '_recover', fail_once)
     with pytest.raises(ValueError, match='review failure'):
         recover(path, apply=True)
     assert path.read_bytes() == original
