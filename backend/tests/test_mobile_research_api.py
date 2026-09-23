@@ -23,46 +23,6 @@ class FakeRuntime:
         self.collector = FakeCollector()
 
 
-class FakeResearchRuntime:
-    def __init__(self, change_bps=-2.0):
-        self.change_bps = change_bps
-
-    def snapshot(self, now=None, limit=120):
-        latest = now - timedelta(minutes=1)
-        anchor = latest - timedelta(hours=1)
-
-        anchor_value = 4.75
-        latest_value = anchor_value + self.change_bps / 100
-
-        return [
-            {
-                "observed_at": stamp(anchor),
-                "retrieved_at": stamp(anchor + timedelta(seconds=5)),
-                "value": anchor_value,
-                "provider": "twelve-data-us2y",
-            },
-            {
-                "observed_at": stamp(latest),
-                "retrieved_at": stamp(latest + timedelta(seconds=5)),
-                "value": latest_value,
-                "provider": "twelve-data-us2y",
-            },
-        ]
-
-    def status(self, now=None):
-        rows = self.snapshot(now, 120)
-
-        return {
-            "status": "HEALTHY",
-            "freshness": "FRESH",
-            "age_seconds": 60,
-            "value": rows[-1]["value"],
-            "mode": "RESEARCH_ONLY",
-            "channel": "us2y",
-            "symbol": "US2Y",
-        }
-
-
 def xau_candidate(direction="BUY"):
     return {
         "candidate_direction": direction,
@@ -95,15 +55,11 @@ def test_research_api_buy_setup(monkeypatch):
         lambda runtime, now: xau_candidate("BUY"),
     )
 
-    result = research_view(
-        FakeRuntime(),
-        FakeResearchRuntime(change_bps=-2.0),
-        NOW,
-    )
+    result = research_view(FakeRuntime(), None, NOW)
 
     assert result["direction"] == "BUY"
     assert result["action"] == "BUY RESEARCH SETUP"
-    assert result["mode"] == "XAU_US2Y_RESEARCH_ONLY"
+    assert result["mode"] == "XAU_ONLY_RESEARCH"
     assert result["execution"] == "DEMO_ONLY"
     assert result["strict_signal_unchanged"] is True
     assert result["automatic_promotion"] is False
@@ -116,31 +72,10 @@ def test_research_api_sell_setup(monkeypatch):
         lambda runtime, now: xau_candidate("SELL"),
     )
 
-    result = research_view(
-        FakeRuntime(),
-        FakeResearchRuntime(change_bps=2.0),
-        NOW,
-    )
+    result = research_view(FakeRuntime(), None, NOW)
 
     assert result["direction"] == "SELL"
     assert result["action"] == "SELL RESEARCH SETUP"
-
-
-def test_research_api_us2y_conflict_is_diagnostic_only(monkeypatch):
-    monkeypatch.setattr(
-        "backend.mobile.research_api.latest_xau_candidate",
-        lambda runtime, now: xau_candidate("BUY"),
-    )
-
-    result = research_view(
-        FakeRuntime(),
-        FakeResearchRuntime(change_bps=2.0),
-        NOW,
-    )
-
-    assert result["direction"] == "BUY"
-    assert result["us2y"]["bias"] == "SELL"
-    assert "US2Y_CONFLICT" not in result["veto_codes"]
 
 
 def test_research_api_missing_xau_blocks(monkeypatch):
@@ -149,11 +84,7 @@ def test_research_api_missing_xau_blocks(monkeypatch):
         lambda runtime, now: None,
     )
 
-    result = research_view(
-        FakeRuntime(),
-        FakeResearchRuntime(change_bps=-2.0),
-        NOW,
-    )
+    result = research_view(FakeRuntime(), None, NOW)
 
     assert result["direction"] == "NO_TRADE"
     assert "NO_XAU_DECISION" in result["veto_codes"]
