@@ -11,7 +11,6 @@ import re
 import sqlite3
 
 from backend.mobile.research_api import research_view
-from backend.mobile.research_runtime import ResearchUS2YRuntime
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
@@ -174,7 +173,6 @@ def create_app(
     db_path=None,
     clock=lambda: datetime.now(timezone.utc),
     runtime_factory=Runtime,
-    research_runtime_factory=ResearchUS2YRuntime,
 ):
     @asynccontextmanager
     async def lifespan(app):
@@ -183,25 +181,13 @@ def create_app(
             with runtime_factory(db_path) as runtime:
                 app.state.runtime = runtime
 
-                phase = 'RESEARCH_RUNTIME'
-                research_runtime = research_runtime_factory(
-                    main_path=runtime.path,
-                    clock=clock,
-                )
-                app.state.research_runtime = research_runtime
 
                 if runtime.collection_enabled:
                     phase = 'COLLECTOR_START'
                     runtime.collector.start()
-                    phase = 'RESEARCH_START'
-                    research_runtime.start()
 
-                try:
-                    phase = 'SERVING'
-                    yield
-                finally:
-                    phase = 'SHUTDOWN'
-                    research_runtime.close()
+                phase = 'SERVING'
+                yield
 
         except Exception as exc:
             # Never print exception bodies that could contain provider secrets or DB paths.
@@ -274,11 +260,7 @@ def create_app(
     def research_signal():
         r = runtime()
         now = clock()
-        return research_view(
-            r,
-            app.state.research_runtime,
-            now,
-        )
+        return research_view(r, None, now)
 
     @app.get('/performance')
     def performance():
