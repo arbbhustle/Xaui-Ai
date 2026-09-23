@@ -337,7 +337,16 @@ def research_view(runtime, research_runtime, now):
     # Embed a small, read-only research history in the same response so the
     # phone keeps its fast single-request Home sync. Champion /history and
     # /performance remain isolated and are never mixed into this profile.
-    result["research_history"] = research_history(runtime, now, limit=30)
+    # Some unit-test runtimes intentionally provide only collector state.
+    # Production Runtime has the read/store interfaces required for ledger history.
+    if hasattr(runtime, "read") and hasattr(runtime, "store"):
+        result["research_history"] = research_history(runtime, now, limit=30)
+    else:
+        result["research_history"] = {
+            "items": [],
+            "source": "XAU_ONLY_RESEARCH_V1",
+            "execution": "DEMO_ONLY",
+        }
 
     result["served_at"] = stamp(now)
 
