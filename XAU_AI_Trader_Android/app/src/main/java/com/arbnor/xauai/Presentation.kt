@@ -62,6 +62,16 @@ object Presentation {
     }
     fun stale(root: JSONObject, now: Instant): Boolean {
         val f = champion(root)
+        // XAU-only research freshness is explicitly reported by the backend
+        // from the provider collector. Do not reclassify a DATA_READY research
+        // response as stale from the API served_at/request timestamp: small
+        // phone/server clock skew can make that timestamp appear in the future.
+        if (f.text("profile") == "XAU_ONLY_RESEARCH_V1") {
+            val xau = Fields(root).obj("provider_health.xau")
+            return Fields(root).text("readiness.status") != "DATA_READY" ||
+                xau?.optString("status") != "HEALTHY" ||
+                xau.optString("freshness") != "FRESH"
+        }
         val expiry = instant(f.text("expires_at"))
         if (expiry != null && !now.isBefore(expiry)) return true
         val stamp = instant(f.text("timestamp_utc", "timestamp")) ?: return true
