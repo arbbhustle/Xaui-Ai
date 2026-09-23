@@ -126,7 +126,7 @@ def test_research_api_sell_setup(monkeypatch):
     assert result["action"] == "SELL RESEARCH SETUP"
 
 
-def test_research_api_conflict_blocks(monkeypatch):
+def test_research_api_us2y_conflict_is_diagnostic_only(monkeypatch):
     monkeypatch.setattr(
         "backend.mobile.research_api.latest_xau_candidate",
         lambda runtime, now: xau_candidate("BUY"),
@@ -138,8 +138,9 @@ def test_research_api_conflict_blocks(monkeypatch):
         NOW,
     )
 
-    assert result["direction"] == "NO_TRADE"
-    assert "US2Y_CONFLICT" in result["veto_codes"]
+    assert result["direction"] == "BUY"
+    assert result["us2y"]["bias"] == "SELL"
+    assert "US2Y_CONFLICT" not in result["veto_codes"]
 
 
 def test_research_api_missing_xau_blocks(monkeypatch):
