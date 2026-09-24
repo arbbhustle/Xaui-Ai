@@ -9,7 +9,7 @@ import json
 
 from ..domain import Policy, digest, freshness_errors, parse, stamp
 from .collection import MOBILE_XAU_FRESHNESS_SECONDS
-from .research_signal import compose_research_signal
+from .research_signal import compose_research_signal, research_technical_blocks
 
 
 def research_xau_freshness_errors(closes, now):
@@ -190,30 +190,9 @@ def research_history(runtime, now, limit=30):
                 if direction not in ("BUY", "SELL"):
                     continue
 
-                technical_blocks = sorted({
-                    code
-                    for code in decision.get("veto_codes", [])
-                    if not str(code).startswith((
-                        "MISSING_CRITICAL_INTELLIGENCE:",
-                        "STALE_INTELLIGENCE:",
-                        "FUTURE_INTELLIGENCE:",
-                        "CONFLICTING_HIGH_IMPACT_SOURCES:",
-                        "PROVIDER_NOT_READY:",
-                    ))
-                    and code not in {
-                        "MISSING_CRITICAL_EVENT_DATA",
-                        "MACRO_PROVIDER_FAILURE",
-                        "INSUFFICIENT_CALIBRATION",
-                        "TIMEFRAME_DISAGREEMENT:1h",
-                        "TIMEFRAME_DISAGREEMENT:4h",
-                        "HIGH_MARKET_ENTROPY",
-                        "EXTREME_TIMEFRAME_TENSION",
-                        "MARKET_SHOCK",
-                        "UNRESOLVED_EVENT_SHOCK",
-                        "UNSTABLE_HIDDEN_STATE",
-                        "HIDDEN_COUNCIL_CONFLICT",
-                    }
-                })
+                technical_blocks = research_technical_blocks(
+                    decision.get("veto_codes", [])
+                )
                 if technical_blocks:
                     continue
 
