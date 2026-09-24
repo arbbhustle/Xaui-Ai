@@ -64,6 +64,24 @@ def research_technical_blocks(veto_codes):
     })
 
 
+def _anti_chase_blocks(xau_decision):
+    """Block fresh entries when reversal evidence directly opposes the candidate."""
+    candidate = xau_decision.get("candidate_direction")
+    hidden = xau_decision.get("hidden_state") or {}
+    state = hidden.get("state")
+    dgfe = hidden.get("dgfe") or {}
+    liquidity = hidden.get("liquidity") or {}
+    pressure = dgfe.get("directional_pressure")
+    reclaim = liquidity.get("reclaim_direction")
+    blocks = []
+    sign = 1 if candidate == "BUY" else -1 if candidate == "SELL" else 0
+    if sign and state == "LIQUIDITY_SWEEP" and reclaim in (-1, 1) and reclaim == -sign:
+        blocks.append("OPPOSING_LIQUIDITY_SWEEP")
+    if sign and state == "EXHAUSTION" and isinstance(pressure, (int, float)) and pressure * sign < 0:
+        blocks.append("OPPOSING_EXHAUSTION_PRESSURE")
+    return blocks
+
+
 def compose_research_signal(xau_decision, now):
     """Project the XAU technical candidate into the isolated research profile."""
 
@@ -120,6 +138,9 @@ def compose_research_signal(xau_decision, now):
         for code in xau_decision.get("veto_codes", [])
         if not _research_ignored_veto(code)
     ]
+    # Hidden State is not allowed to promote a trade, but explicit reversal
+    # evidence may stop Research from chasing a move after a sweep/exhaustion.
+    technical_blocks.extend(_anti_chase_blocks(xau_decision))
 
     result["xau_technical_blocks"] = sorted(
         set(technical_blocks)
