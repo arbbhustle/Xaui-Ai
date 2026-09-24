@@ -240,6 +240,60 @@ def research_history(runtime, now, limit=30):
     }
 
 
+def research_history_diagnostics(runtime, now, sample_limit=12):
+    """Read-only explanation of why recent ledger evaluations enter history."""
+    counts = {
+        "decision_events": 0,
+        "candidate_buy_sell": 0,
+        "actionable_research": 0,
+        "blocked_research": 0,
+        "no_candidate": 0,
+    }
+    samples = []
+    with runtime.read() as conn:
+        rows = conn.execute(
+            """
+            SELECT seq, at, payload_id
+            FROM forward_ledger
+            WHERE kind='DECISION' AND at<=?
+            ORDER BY seq DESC
+            LIMIT 500
+            """,
+            (stamp(now),),
+        ).fetchall()
+        counts["decision_events"] = len(rows)
+        for row in rows:
+            event = runtime.store.get(conn, row["payload_id"])
+            decision = event.get("champion") or {}
+            if not isinstance(decision, dict):
+                continue
+            candidate = decision.get("candidate_direction", "NO_TRADE")
+            blocks = research_technical_blocks(decision.get("veto_codes", []))
+            if candidate in ("BUY", "SELL"):
+                counts["candidate_buy_sell"] += 1
+                if blocks:
+                    counts["blocked_research"] += 1
+                else:
+                    counts["actionable_research"] += 1
+            else:
+                counts["no_candidate"] += 1
+            if len(samples) < sample_limit and (
+                candidate in ("BUY", "SELL") or decision.get("entry") == 4298.54
+            ):
+                samples.append({
+                    "seq": row["seq"],
+                    "at": row["at"],
+                    "candidate_direction": candidate,
+                    "entry": decision.get("entry"),
+                    "signal_candle_close": decision.get("signal_candle_close"),
+                    "expires_at": decision.get("expires_at"),
+                    "raw_veto_codes": sorted(set(decision.get("veto_codes", []))),
+                    "research_technical_blocks": blocks,
+                    "would_enter_history": candidate in ("BUY", "SELL") and not blocks,
+                })
+    return {"counts": counts, "samples": samples}
+
+
 def research_view(runtime, research_runtime, now):
     """Produce current XAU-only research signal without altering champion."""
 
@@ -328,6 +382,7 @@ def research_view(runtime, research_runtime, now):
     # Production Runtime has the read/store interfaces required for ledger history.
     if hasattr(runtime, "read") and hasattr(runtime, "store"):
         result["research_history"] = research_history(runtime, now, limit=30)
+        result["research_history_diagnostics"] = research_history_diagnostics(runtime, now)
     else:
         result["research_history"] = {
             "items": [],
