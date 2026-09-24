@@ -55,6 +55,15 @@ def _research_ignored_veto(code):
     )
 
 
+def research_technical_blocks(veto_codes):
+    """Return only vetoes that hard-block the XAU-only research profile."""
+    return sorted({
+        code
+        for code in (veto_codes or [])
+        if not _research_ignored_veto(code)
+    })
+
+
 def compose_research_signal(xau_decision, now):
     """Project the XAU technical candidate into the isolated research profile."""
 
