@@ -142,76 +142,103 @@ def research_history(runtime, now, limit=30):
     seen = set()
 
     with runtime.read() as conn:
-        rows = conn.execute(
-            """
-            SELECT seq, at, payload_id
-            FROM forward_ledger
-            WHERE kind='DECISION' AND at<=?
-            ORDER BY seq DESC
-            LIMIT 500
-            """,
-            (stamp(now),),
-        ).fetchall()
+        # Do not cap the search to the latest 500 evaluations. At the normal
+        # two-minute cadence that is only about 16.7 hours, so a quiet market
+        # can make valid BUY/SELL research setups disappear from the phone even
+        # though the immutable ledger still contains them. Page backwards until
+        # the requested number of actionable setups is found or history ends.
+        before_seq = None
+        exhausted = False
 
-        for row in rows:
-            event = runtime.store.get(conn, row["payload_id"])
-            decision = event.get("champion") or {}
-            if not isinstance(decision, dict):
-                continue
+        while len(items) < limit and not exhausted:
+            if before_seq is None:
+                rows = conn.execute(
+                    """
+                    SELECT seq, at, payload_id
+                    FROM forward_ledger
+                    WHERE kind='DECISION' AND at<=?
+                    ORDER BY seq DESC
+                    LIMIT 500
+                    """,
+                    (stamp(now),),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT seq, at, payload_id
+                    FROM forward_ledger
+                    WHERE kind='DECISION' AND at<=? AND seq<?
+                    ORDER BY seq DESC
+                    LIMIT 500
+                    """,
+                    (stamp(now), before_seq),
+                ).fetchall()
 
-            direction = decision.get("candidate_direction")
-            if direction not in ("BUY", "SELL"):
-                continue
-
-            technical_blocks = sorted({
-                code
-                for code in decision.get("veto_codes", [])
-                if not str(code).startswith((
-                    "MISSING_CRITICAL_INTELLIGENCE:",
-                    "STALE_INTELLIGENCE:",
-                    "FUTURE_INTELLIGENCE:",
-                    "CONFLICTING_HIGH_IMPACT_SOURCES:",
-                    "PROVIDER_NOT_READY:",
-                ))
-                and code not in {
-                    "MISSING_CRITICAL_EVENT_DATA",
-                    "MACRO_PROVIDER_FAILURE",
-                    "INSUFFICIENT_CALIBRATION",
-                    "TIMEFRAME_DISAGREEMENT:1h",
-                    "TIMEFRAME_DISAGREEMENT:4h",
-                    "HIGH_MARKET_ENTROPY",
-                    "EXTREME_TIMEFRAME_TENSION",
-                    "MARKET_SHOCK",
-                    "UNRESOLVED_EVENT_SHOCK",
-                    "UNSTABLE_HIDDEN_STATE",
-                    "HIDDEN_COUNCIL_CONFLICT",
-                }
-            })
-            if technical_blocks:
-                continue
-
-            signal_close = decision.get("signal_candle_close")
-            expires_at = decision.get("expires_at")
-            key = (direction, signal_close, expires_at)
-            if key in seen:
-                continue
-            seen.add(key)
-
-            items.append({
-                "source": "XAU_ONLY_RESEARCH_V1",
-                "execution": "DEMO_ONLY",
-                "direction": direction,
-                "entry": decision.get("entry"),
-                "timestamp_utc": signal_close or row["at"],
-                "signal_candle_close": signal_close,
-                "expires_at": expires_at,
-                "buy_score": decision.get("buy_score"),
-                "sell_score": decision.get("sell_score"),
-                "status": "RECORDED_RESEARCH_SETUP",
-                "cursor": row["seq"],
-            })
-            if len(items) >= limit:
+            if not rows:
                 break
+
+            exhausted = len(rows) < 500
+            before_seq = rows[-1]["seq"]
+
+            for row in rows:
+                event = runtime.store.get(conn, row["payload_id"])
+                decision = event.get("champion") or {}
+                if not isinstance(decision, dict):
+                    continue
+
+                direction = decision.get("candidate_direction")
+                if direction not in ("BUY", "SELL"):
+                    continue
+
+                technical_blocks = sorted({
+                    code
+                    for code in decision.get("veto_codes", [])
+                    if not str(code).startswith((
+                        "MISSING_CRITICAL_INTELLIGENCE:",
+                        "STALE_INTELLIGENCE:",
+                        "FUTURE_INTELLIGENCE:",
+                        "CONFLICTING_HIGH_IMPACT_SOURCES:",
+                        "PROVIDER_NOT_READY:",
+                    ))
+                    and code not in {
+                        "MISSING_CRITICAL_EVENT_DATA",
+                        "MACRO_PROVIDER_FAILURE",
+                        "INSUFFICIENT_CALIBRATION",
+                        "TIMEFRAME_DISAGREEMENT:1h",
+                        "TIMEFRAME_DISAGREEMENT:4h",
+                        "HIGH_MARKET_ENTROPY",
+                        "EXTREME_TIMEFRAME_TENSION",
+                        "MARKET_SHOCK",
+                        "UNRESOLVED_EVENT_SHOCK",
+                        "UNSTABLE_HIDDEN_STATE",
+                        "HIDDEN_COUNCIL_CONFLICT",
+                    }
+                })
+                if technical_blocks:
+                    continue
+
+                signal_close = decision.get("signal_candle_close")
+                expires_at = decision.get("expires_at")
+                key = (direction, signal_close, expires_at)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                items.append({
+                    "source": "XAU_ONLY_RESEARCH_V1",
+                    "execution": "DEMO_ONLY",
+                    "direction": direction,
+                    "entry": decision.get("entry"),
+                    "timestamp_utc": signal_close or row["at"],
+                    "signal_candle_close": signal_close,
+                    "expires_at": expires_at,
+                    "buy_score": decision.get("buy_score"),
+                    "sell_score": decision.get("sell_score"),
+                    "status": "RECORDED_RESEARCH_SETUP",
+                    "cursor": row["seq"],
+                })
+                if len(items) >= limit:
+                    break
 
     return {
         "items": items,
