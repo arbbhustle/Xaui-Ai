@@ -61,4 +61,22 @@ class ApiClientTest {
         val trade=JSONObject().put("decision_id","one").put("source","ADAPTIVE_CHALLENGER").put("status","CLOSED").put("r_multiple",99)
         assertFalse(Presentation.attachOutcomes(listOf(history),listOf(trade))[0].has("r_multiple"))
     }
+    @Test fun researchEndpointParsesEmbeddedResearchHistoryItems() {
+        val recorded=JSONObject()
+            .put("direction","BUY")
+            .put("candidate_direction","BUY")
+            .put("entry",4298.54)
+            .put("timestamp_utc","2026-09-24T01:00:00Z")
+            .put("status","RECORDED_RESEARCH_SETUP")
+        val payload=JSONObject()
+            .put("direction","NO_TRADE")
+            .put("research_history",JSONObject()
+                .put("items",JSONArray().put(recorded))
+                .put("source","XAU_ONLY_RESEARCH_V1")
+                .put("execution","DEMO_ONLY"))
+        val data=ApiClient { payload }.fetch(ApiClient.DEFAULT_ENDPOINT)
+        assertEquals(1,data.history.size)
+        assertEquals("BUY",data.history[0].getString("direction"))
+        assertEquals(4298.54,data.history[0].getDouble("entry"),0.0)
+    }
 }
