@@ -90,6 +90,17 @@ def compose_research_signal(xau_decision, now):
     result["candidate_direction"] = candidate
     result["entry"] = xau_decision.get("entry")
 
+    # Preserve the XAU engine's read-only decision evidence for the research
+    # presentation. This does not change scoring, vetoes, or execution; it only
+    # exposes the council/hidden-state fields already computed by the Champion.
+    for field in (
+        "buy_score", "sell_score", "raw_score", "edge", "rsi_state", "atr",
+        "components", "timeframes", "hidden_state", "analytics_context",
+        "intelligence", "session", "signal_candle_close", "expires_at",
+    ):
+        if field in xau_decision:
+            result[field] = xau_decision[field]
+
     if candidate not in ("BUY", "SELL"):
         result["veto_codes"].append(
             "NO_XAU_TECHNICAL_CANDIDATE"
