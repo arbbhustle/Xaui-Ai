@@ -119,12 +119,29 @@ def test_range_sell_is_blocked_when_fast_frames_no_longer_confirm():
     assert "FAST_TIMEFRAMES_NOT_CONFIRMING" in result["veto_codes"]
 
 
-def test_transition_sell_survives_with_fast_frame_confirmation():
+def test_transition_sell_is_blocked_when_only_one_fast_frame_confirms():
     xau = xau_candidate("SELL")
     xau["mode"] = "TRANSITION"
     xau["timeframes"] = {
         "1min": {"bias": "SELL", "bias_score": -0.25},
         "5min": {"bias": "NEUTRAL", "bias_score": -0.05},
+    }
+    xau["hidden_state"] = {
+        "state": "RANGE",
+        "dgfe": {"directional_pressure": -20.0},
+        "liquidity": {"reclaim_direction": 0},
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "NO_TRADE"
+    assert "FAST_TIMEFRAMES_NOT_CONFIRMING" in result["veto_codes"]
+
+
+def test_transition_sell_survives_when_both_fast_frames_confirm():
+    xau = xau_candidate("SELL")
+    xau["mode"] = "TRANSITION"
+    xau["timeframes"] = {
+        "1min": {"bias": "SELL", "bias_score": -0.25},
+        "5min": {"bias": "SELL", "bias_score": -0.20},
     }
     xau["hidden_state"] = {
         "state": "RANGE",
