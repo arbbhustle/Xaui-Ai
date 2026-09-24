@@ -141,9 +141,13 @@ def evaluate_council(snapshot, policy: Policy, score_overlay=None):
 
     five = analysis["5min"]
     signed = {k: five[k] for k in ("technical", "momentum", "market_structure")}
-    signed["multi_timeframe_alignment"] = sum(
-        weight * ({"BUY": 1, "SELL": -1, "NEUTRAL": 0}[analysis[k]["bias"]])
-        for k, weight in ALIGNMENT_WEIGHTS.items())
+    # Preserve alignment strength instead of turning every directional
+    # timeframe into a full +/-1 vote. A barely directional 15m/1h candle must
+    # not contribute the same evidence as a strongly directional one.
+    signed["multi_timeframe_alignment"] = clamp(sum(
+        weight * analysis[k]["bias_score"]
+        for k, weight in ALIGNMENT_WEIGHTS.items()
+    ))
     for name, weight in WEIGHTS.items():
         buy = five["volatility_quality"] if name == "volatility" else 50 * (1 + signed[name])
         sell = buy if name == "volatility" else 100 - buy
