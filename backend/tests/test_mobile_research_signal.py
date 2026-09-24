@@ -61,3 +61,39 @@ def test_expired_xau_candidate_is_blocked():
     result = compose_research_signal(xau, NOW)
     assert result["direction"] == "NO_TRADE"
     assert "XAU_SIGNAL_EXPIRED" in result["veto_codes"]
+
+
+def test_opposing_liquidity_sweep_blocks_chasing_sell():
+    xau = xau_candidate("SELL")
+    xau["hidden_state"] = {
+        "state": "LIQUIDITY_SWEEP",
+        "dgfe": {"directional_pressure": -60.0},
+        "liquidity": {"reclaim_direction": 1},
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "NO_TRADE"
+    assert "OPPOSING_LIQUIDITY_SWEEP" in result["veto_codes"]
+
+
+def test_same_direction_liquidity_sweep_does_not_block_sell():
+    xau = xau_candidate("SELL")
+    xau["hidden_state"] = {
+        "state": "LIQUIDITY_SWEEP",
+        "dgfe": {"directional_pressure": -60.0},
+        "liquidity": {"reclaim_direction": -1},
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "SELL"
+    assert "OPPOSING_LIQUIDITY_SWEEP" not in result["veto_codes"]
+
+
+def test_opposing_exhaustion_pressure_blocks_chasing_buy():
+    xau = xau_candidate("BUY")
+    xau["hidden_state"] = {
+        "state": "EXHAUSTION",
+        "dgfe": {"directional_pressure": -20.0},
+        "liquidity": {"reclaim_direction": 0},
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "NO_TRADE"
+    assert "OPPOSING_EXHAUSTION_PRESSURE" in result["veto_codes"]
