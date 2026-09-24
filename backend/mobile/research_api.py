@@ -227,6 +227,19 @@ def research_history(runtime, now, limit=30):
                     # Preserve the numeric per-timeframe evidence used by Council.
                     # This is diagnostic-only: it does not change scoring or gating.
                     "timeframes": deepcopy(decision.get("timeframes", {})),
+                    # Archive the exact research gate outcome at this point in
+                    # time so late/chasing setups can be audited from history
+                    # without relying on the latest diagnostic sample window.
+                    "research_gate_evidence": {
+                        "anti_chase_blocks": _anti_chase_blocks(decision),
+                        "fast_bias_scores": {
+                            tf: (decision.get("timeframes", {}).get(tf, {}) or {}).get("bias_score")
+                            for tf in ("1min", "5min")
+                        },
+                        "hidden_state": (decision.get("hidden_state") or {}).get("state"),
+                        "regime": (decision.get("analytics_context") or {}).get("volatility_regime")
+                                  or decision.get("mode"),
+                    },
                     "hidden_state": deepcopy(decision.get("hidden_state", {})),
                     "analytics_context": deepcopy(decision.get("analytics_context", {})),
                     "status": "RECORDED_RESEARCH_SETUP",
