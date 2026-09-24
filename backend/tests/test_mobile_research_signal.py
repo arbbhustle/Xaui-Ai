@@ -11,6 +11,11 @@ def xau_candidate(direction):
         "direction": "NO_TRADE",
         "entry": 4300.0,
         "expires_at": stamp(NOW + timedelta(minutes=4)),
+        "buy_score": 72.5,
+        "sell_score": 27.5,
+        "components": {"technical": {"buy": 80.0, "sell": 20.0, "weight": 0.3}},
+        "hidden_state": {"state": "EXPANSION", "dgfe": {"directional_pressure": 61.0}},
+        "analytics_context": {"hidden_state": "EXPANSION"},
         "veto_codes": [
             "MISSING_CRITICAL_INTELLIGENCE:usd",
             "MISSING_CRITICAL_INTELLIGENCE:yields",
@@ -29,6 +34,10 @@ def test_xau_buy_creates_research_setup():
     assert result["research_only"] is True
     assert result["predictive_edge_established"] is False
     assert result["veto_codes"] == []
+    assert result["buy_score"] == 72.5
+    assert result["components"]["technical"]["buy"] == 80.0
+    assert result["hidden_state"]["state"] == "EXPANSION"
+    assert result["analytics_context"]["hidden_state"] == "EXPANSION"
 
 
 def test_xau_sell_creates_research_setup():
