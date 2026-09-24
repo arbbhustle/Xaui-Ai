@@ -100,7 +100,12 @@ def _anti_chase_blocks(xau_decision):
     regime = analytics.get("volatility_regime") or xau_decision.get("mode")
     range_or_transition = state == "RANGE" or regime in ("RANGE", "TRANSITION")
     if sign and range_or_transition and len(fast_scores) == 2:
-        if all(score * sign <= 0.15 for score in fast_scores):
+        # A late entry must have real fast-frame participation. Requiring only
+        # one weakly directional fast frame (>0.15) still allowed Research to
+        # chase a move while the other fast frame had already stalled/reversed.
+        # In RANGE/TRANSITION require both 1m and 5m to agree with the candidate;
+        # Champion itself remains immutable.
+        if any(score * sign <= 0.15 for score in fast_scores):
             blocks.append("FAST_TIMEFRAMES_NOT_CONFIRMING")
 
     return blocks
