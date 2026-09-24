@@ -9,7 +9,7 @@ import json
 
 from ..domain import Policy, digest, freshness_errors, parse, stamp
 from .collection import MOBILE_XAU_FRESHNESS_SECONDS
-from .research_signal import compose_research_signal, research_technical_blocks
+from .research_signal import compose_research_signal, research_technical_blocks, _anti_chase_blocks
 
 
 def research_xau_freshness_errors(closes, now):
@@ -192,7 +192,7 @@ def research_history(runtime, now, limit=30):
 
                 technical_blocks = research_technical_blocks(
                     decision.get("veto_codes", [])
-                )
+                ) + _anti_chase_blocks(decision)
                 if technical_blocks:
                     continue
 
@@ -268,7 +268,7 @@ def research_history_diagnostics(runtime, now, sample_limit=12):
             if not isinstance(decision, dict):
                 continue
             candidate = decision.get("candidate_direction", "NO_TRADE")
-            blocks = research_technical_blocks(decision.get("veto_codes", []))
+            blocks = research_technical_blocks(decision.get("veto_codes", [])) + _anti_chase_blocks(decision)
             if candidate in ("BUY", "SELL"):
                 counts["candidate_buy_sell"] += 1
                 if blocks:
