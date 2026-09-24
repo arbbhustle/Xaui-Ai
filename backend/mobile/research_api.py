@@ -224,6 +224,9 @@ def research_history(runtime, now, limit=30):
                     "mode": decision.get("mode"),
                     "session": decision.get("session"),
                     "components": deepcopy(decision.get("components", {})),
+                    # Preserve the numeric per-timeframe evidence used by Council.
+                    # This is diagnostic-only: it does not change scoring or gating.
+                    "timeframes": deepcopy(decision.get("timeframes", {})),
                     "hidden_state": deepcopy(decision.get("hidden_state", {})),
                     "analytics_context": deepcopy(decision.get("analytics_context", {})),
                     "status": "RECORDED_RESEARCH_SETUP",
@@ -288,6 +291,14 @@ def research_history_diagnostics(runtime, now, sample_limit=12):
                     "signal_candle_close": decision.get("signal_candle_close"),
                     "expires_at": decision.get("expires_at"),
                     "raw_veto_codes": sorted(set(decision.get("veto_codes", []))),
+                    "timeframe_bias_scores": {
+                        tf: (decision.get("timeframes", {}).get(tf, {}) or {}).get("bias_score")
+                        for tf in ("1min", "5min", "15min", "1h", "4h")
+                    },
+                    "timeframe_biases": {
+                        tf: (decision.get("timeframes", {}).get(tf, {}) or {}).get("bias")
+                        for tf in ("1min", "5min", "15min", "1h", "4h")
+                    },
                     "research_technical_blocks": blocks,
                     "would_enter_history": candidate in ("BUY", "SELL") and not blocks,
                 })
