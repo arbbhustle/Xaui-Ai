@@ -79,6 +79,30 @@ def _anti_chase_blocks(xau_decision):
         blocks.append("OPPOSING_LIQUIDITY_SWEEP")
     if sign and state == "EXHAUSTION" and isinstance(pressure, (int, float)) and pressure * sign < 0:
         blocks.append("OPPOSING_EXHAUSTION_PRESSURE")
+
+    # Entry timing must come from the fast frames, not only from the slower
+    # 15m/1h/4h trend vote. The immutable Champion can remain strongly
+    # directional after an extended move even when 1m and 5m have already
+    # stopped confirming it. In RANGE/TRANSITION conditions that is precisely
+    # where Research was chasing late entries near reversals.
+    #
+    # This is a research-only veto: it never creates/reverses a trade and does
+    # not modify Champion scoring. Require at least one fast frame to confirm
+    # the candidate when the market is not in a clean trend/expansion state.
+    timeframes = xau_decision.get("timeframes") or {}
+    fast_scores = []
+    for timeframe in ("1min", "5min"):
+        value = (timeframes.get(timeframe) or {}).get("bias_score")
+        if isinstance(value, (int, float)):
+            fast_scores.append(value)
+
+    analytics = xau_decision.get("analytics_context") or {}
+    regime = analytics.get("volatility_regime") or xau_decision.get("mode")
+    range_or_transition = state == "RANGE" or regime in ("RANGE", "TRANSITION")
+    if sign and range_or_transition and len(fast_scores) == 2:
+        if all(score * sign <= 0.15 for score in fast_scores):
+            blocks.append("FAST_TIMEFRAMES_NOT_CONFIRMING")
+
     return blocks
 
 
