@@ -4,6 +4,7 @@ from backend.domain import stamp
 from backend.mobile.research_api import (
     research_view,
     research_xau_freshness_errors,
+    research_history,
 )
 from test_phase1 import NOW
 
@@ -112,3 +113,68 @@ def test_mobile_xau_240_second_research_window():
         closes,
         NOW,
     )
+
+class HistoryConnection:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, sql, params):
+        now = params[0]
+        before = params[1] if len(params) > 1 else None
+        eligible = [
+            row for row in self.rows
+            if row["at"] <= now and (before is None or row["seq"] < before)
+        ]
+        eligible.sort(key=lambda row: row["seq"], reverse=True)
+        return HistoryRows(eligible[:500])
+
+
+class HistoryRows(list):
+    def fetchall(self):
+        return list(self)
+
+
+class HistoryStore:
+    @staticmethod
+    def get(conn, payload_id):
+        seq = int(payload_id.split("-")[-1])
+        if seq == 100:
+            champion = xau_candidate("SELL")
+            champion["signal_candle_close"] = stamp(NOW - timedelta(hours=20))
+            champion["expires_at"] = stamp(NOW - timedelta(hours=19, minutes=55))
+            champion["veto_codes"] = ["INSUFFICIENT_CALIBRATION"]
+        else:
+            champion = xau_candidate("NO_TRADE")
+        return {"champion": champion}
+
+
+class HistoryRuntime:
+    def __init__(self):
+        # 600 newer NO_TRADE evaluations put the actionable SELL beyond the
+        # old 500-row scan window.
+        self.rows = [
+            {"seq": seq, "at": stamp(NOW - timedelta(minutes=(700 - seq) * 2)), "payload_id": f"event-{seq}"}
+            for seq in range(100, 701)
+        ]
+        self.store = HistoryStore()
+
+    class _Read:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def __enter__(self):
+            return self.conn
+
+        def __exit__(self, *args):
+            return False
+
+    def read(self):
+        return self._Read(HistoryConnection(self.rows))
+
+
+def test_research_history_pages_past_500_quiet_evaluations():
+    history = research_history(HistoryRuntime(), NOW, limit=30)
+
+    assert len(history["items"]) == 1
+    assert history["items"][0]["direction"] == "SELL"
+    assert history["items"][0]["cursor"] == 100
