@@ -4,6 +4,8 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.content.Intent
+import androidx.work.OneTimeWorkRequestBuilder
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
@@ -124,7 +126,17 @@ class MainActivity : AppCompatActivity() {
             handler.post {
                 if(request!=generation || !active || isDestroyed) return@post
                 fetching=false; connected=captured!=null
-                if(captured!=null) { data=captured; message="Connected · DEMO / research" }
+                if(captured!=null) {
+                    data=captured
+                    message="Connected · DEMO / research"
+                    // Foreground polling already refreshes every 30 seconds. Run the
+                    // same deduplicated notification worker after each successful sync
+                    // so a new BUY/SELL is not forced to wait for the 15-minute
+                    // periodic WorkManager window.
+                    WorkManager.getInstance(this).enqueue(
+                        OneTimeWorkRequestBuilder<SignalSyncWorker>().build()
+                    )
+                }
                 else message=error ?: "Backend unavailable"
                 if (!(page==3 && editingEndpoint)) render(true)
             }
