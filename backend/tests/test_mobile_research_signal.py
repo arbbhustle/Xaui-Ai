@@ -151,3 +151,45 @@ def test_transition_sell_survives_when_both_fast_frames_confirm():
     result = compose_research_signal(xau, NOW)
     assert result["direction"] == "SELL"
     assert "FAST_TIMEFRAMES_NOT_CONFIRMING" not in result["veto_codes"]
+
+
+def test_transition_sell_is_blocked_after_extended_move():
+    xau = xau_candidate("SELL")
+    xau["mode"] = "TRANSITION"
+    xau["timeframes"] = {
+        "1min": {"bias": "SELL", "bias_score": -0.30},
+        "5min": {"bias": "SELL", "bias_score": -0.35},
+    }
+    xau["hidden_state"] = {
+        "state": "RANGE",
+        "dgfe": {"directional_pressure": -35.0},
+        "liquidity": {
+            "reclaim_direction": 0,
+            "displacement": 65.0,
+            "baseline_atr": 4.0,
+        },
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "NO_TRADE"
+    assert "EXTENDED_MOVE_NO_FRESH_ENTRY" in result["veto_codes"]
+
+
+def test_transition_sell_can_pass_when_move_is_not_extended():
+    xau = xau_candidate("SELL")
+    xau["mode"] = "TRANSITION"
+    xau["timeframes"] = {
+        "1min": {"bias": "SELL", "bias_score": -0.30},
+        "5min": {"bias": "SELL", "bias_score": -0.35},
+    }
+    xau["hidden_state"] = {
+        "state": "RANGE",
+        "dgfe": {"directional_pressure": -35.0},
+        "liquidity": {
+            "reclaim_direction": 0,
+            "displacement": 30.0,
+            "baseline_atr": 4.0,
+        },
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "SELL"
+    assert "EXTENDED_MOVE_NO_FRESH_ENTRY" not in result["veto_codes"]
