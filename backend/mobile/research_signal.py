@@ -108,6 +108,25 @@ def _anti_chase_blocks(xau_decision):
         if any(score * sign <= 0.15 for score in fast_scores):
             blocks.append("FAST_TIMEFRAMES_NOT_CONFIRMING")
 
+    # Do not enter after the move is already mature. The failure pattern in
+    # forward research was BUY near the top / SELL near the bottom after a
+    # large 5m displacement. Hidden State already measures the last 5m candle
+    # against a trailing ATR baseline, so reuse that causal evidence instead
+    # of adding a second price-history implementation here.
+    #
+    # displacement = abs(last 5m body) / baseline ATR * 50, clipped to 100.
+    # >= 50 therefore means the latest body alone is at least one baseline ATR.
+    # In RANGE/TRANSITION that is too extended for a fresh research entry:
+    # wait for a reset/retest rather than chase it.
+    displacement = liquidity.get("displacement")
+    if (
+        sign
+        and range_or_transition
+        and isinstance(displacement, (int, float))
+        and displacement >= 50
+    ):
+        blocks.append("EXTENDED_MOVE_NO_FRESH_ENTRY")
+
     return blocks
 
 
