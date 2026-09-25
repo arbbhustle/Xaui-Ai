@@ -127,6 +127,32 @@ def _anti_chase_blocks(xau_decision):
     ):
         blocks.append("EXTENDED_MOVE_NO_FRESH_ENTRY")
 
+    # A fresh entry must not be taken after price has already travelled a large
+    # distance in the candidate direction. Use the causal 5m candles already
+    # embedded in the decision evidence: compare the current entry with the
+    # recent 5m swing and normalize by the current 5m ATR. This catches the
+    # observed late BUY-near-top / SELL-near-bottom pattern even when the last
+    # candle itself is no longer a large displacement candle.
+    five = timeframes.get("5min") or {}
+    atr = xau_decision.get("atr")
+    entry = xau_decision.get("entry")
+    recent_high = five.get("recent_high")
+    recent_low = five.get("recent_low")
+    if (
+        sign
+        and isinstance(entry, (int, float))
+        and isinstance(atr, (int, float))
+        and atr > 0
+    ):
+        if sign < 0 and isinstance(recent_high, (int, float)):
+            travelled_atr = (recent_high - entry) / atr
+            if travelled_atr >= 1.5:
+                blocks.append("LATE_SELL_AFTER_EXTENDED_DROP")
+        elif sign > 0 and isinstance(recent_low, (int, float)):
+            travelled_atr = (entry - recent_low) / atr
+            if travelled_atr >= 1.5:
+                blocks.append("LATE_BUY_AFTER_EXTENDED_RALLY")
+
     return blocks
 
 
