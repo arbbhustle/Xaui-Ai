@@ -233,3 +233,72 @@ def test_late_buy_after_extended_rally_is_blocked():
     result = compose_research_signal(xau, NOW)
     assert result["direction"] == "NO_TRADE"
     assert "LATE_BUY_AFTER_EXTENDED_RALLY" in result["veto_codes"]
+
+
+def test_early_sell_reversal_can_promote_no_trade_before_slow_council_flip():
+    xau = xau_candidate("NO_TRADE")
+    xau["veto_codes"] = ["INSUFFICIENT_SCORE", "INSUFFICIENT_CALIBRATION"]
+    xau["timeframes"] = {
+        "1min": {"bias": "SELL", "bias_score": -0.32},
+        "5min": {
+            "bias": "SELL",
+            "bias_score": -0.27,
+            "momentum": -0.35,
+            "market_structure": -0.25,
+        },
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "SELL"
+    assert result["early_reversal"] is True
+    assert "INSUFFICIENT_SCORE" not in result["veto_codes"]
+
+
+def test_early_buy_reversal_can_promote_no_trade_before_slow_council_flip():
+    xau = xau_candidate("NO_TRADE")
+    xau["veto_codes"] = ["INSUFFICIENT_SCORE", "INSUFFICIENT_CALIBRATION"]
+    xau["timeframes"] = {
+        "1min": {"bias": "BUY", "bias_score": 0.31},
+        "5min": {
+            "bias": "BUY",
+            "bias_score": 0.26,
+            "momentum": 0.34,
+            "market_structure": 0.24,
+        },
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "BUY"
+    assert result["early_reversal"] is True
+
+
+def test_early_reversal_does_not_promote_weak_or_conflicting_fast_evidence():
+    xau = xau_candidate("NO_TRADE")
+    xau["veto_codes"] = ["INSUFFICIENT_SCORE"]
+    xau["timeframes"] = {
+        "1min": {"bias": "SELL", "bias_score": -0.30},
+        "5min": {
+            "bias": "NEUTRAL",
+            "bias_score": -0.08,
+            "momentum": -0.30,
+            "market_structure": -0.20,
+        },
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "NO_TRADE"
+    assert "INSUFFICIENT_SCORE" in result["veto_codes"]
+
+
+def test_early_reversal_never_bypasses_real_technical_veto():
+    xau = xau_candidate("NO_TRADE")
+    xau["veto_codes"] = ["INSUFFICIENT_SCORE", "TIMEFRAME_DISAGREEMENT:15min"]
+    xau["timeframes"] = {
+        "1min": {"bias": "SELL", "bias_score": -0.35},
+        "5min": {
+            "bias": "SELL",
+            "bias_score": -0.30,
+            "momentum": -0.40,
+            "market_structure": -0.30,
+        },
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "NO_TRADE"
+    assert "TIMEFRAME_DISAGREEMENT:15min" in result["veto_codes"]
