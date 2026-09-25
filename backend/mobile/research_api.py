@@ -186,19 +186,25 @@ def research_history(runtime, now, limit=30):
                 if not isinstance(decision, dict):
                     continue
 
-                direction = decision.get("candidate_direction")
+                # Project each historical Champion evaluation through the
+                # same Research composer used by the LIVE endpoint. This is
+                # required for research-only Early Reversal setups, whose
+                # direction intentionally does not mutate immutable Champion.
+                projected = compose_research_signal(decision, parse(row["at"]))
+                direction = projected.get("direction")
                 if direction not in ("BUY", "SELL"):
                     continue
 
-                # History is an immutable record of setups that were actionable
-                # under the research rules that existed at that point in time.
-                # Do not re-run today's anti-chase gates over old decisions: doing
-                # so rewrites the visible past whenever Research gating changes.
-                technical_blocks = research_technical_blocks(
-                    decision.get("veto_codes", [])
-                )
-                if technical_blocks:
-                    continue
+                # Preserve old Champion BUY/SELL history across later gate
+                # changes. For a research-only promoted direction, however,
+                # require the point-in-time Research projection itself to pass.
+                champion_direction = decision.get("candidate_direction")
+                if champion_direction in ("BUY", "SELL"):
+                    technical_blocks = research_technical_blocks(
+                        decision.get("veto_codes", [])
+                    )
+                    if technical_blocks:
+                        continue
 
                 signal_close = decision.get("signal_candle_close")
                 expires_at = decision.get("expires_at")
@@ -212,7 +218,9 @@ def research_history(runtime, now, limit=30):
                     "execution": "DEMO_ONLY",
                     "direction": direction,
                     "candidate_direction": direction,
-                    "entry": decision.get("entry"),
+                    "entry": projected.get("entry", decision.get("entry")),
+                    "early_reversal": bool(projected.get("early_reversal")),
+                    "early_reversal_source": projected.get("early_reversal_source"),
                     "sl": decision.get("sl"),
                     "tp1": decision.get("tp1"),
                     "tp2": decision.get("tp2"),
