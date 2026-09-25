@@ -155,6 +155,44 @@ def _anti_chase_blocks(xau_decision):
     return blocks
 
 
+def _early_reversal_direction(xau_decision):
+    """Return a research-only early reversal when fast evidence is decisive.
+
+    This may promote NO_TRADE to a DEMO research setup, but never overrides an
+    existing Champion BUY/SELL candidate. It deliberately requires both 1m and
+    5m to agree strongly, plus 5m momentum and market structure in the same
+    direction, so one noisy candle cannot manufacture a reversal.
+    """
+    if xau_decision.get("candidate_direction") in ("BUY", "SELL"):
+        return None
+
+    # Only promote when Champion is waiting because score/edge has not caught
+    # up yet. Real technical/data-quality vetoes remain fail-closed.
+    remaining = research_technical_blocks(xau_decision.get("veto_codes", []))
+    if any(code not in {"INSUFFICIENT_SCORE"} for code in remaining):
+        return None
+
+    timeframes = xau_decision.get("timeframes") or {}
+    one = timeframes.get("1min") or {}
+    five = timeframes.get("5min") or {}
+    one_bias = one.get("bias_score")
+    five_bias = five.get("bias_score")
+    momentum = five.get("momentum")
+    structure = five.get("market_structure")
+    if not all(isinstance(v, (int, float)) for v in (one_bias, five_bias, momentum, structure)):
+        return None
+
+    for direction, sign in (("BUY", 1), ("SELL", -1)):
+        if (
+            one_bias * sign >= 0.25
+            and five_bias * sign >= 0.20
+            and momentum * sign >= 0.20
+            and structure * sign >= 0.15
+        ):
+            return direction
+    return None
+
+
 def compose_research_signal(xau_decision, now):
     """Project the XAU technical candidate into the isolated research profile."""
 
@@ -186,6 +224,11 @@ def compose_research_signal(xau_decision, now):
         "candidate_direction",
         "NO_TRADE",
     )
+    early_reversal = _early_reversal_direction(xau_decision)
+    if candidate not in ("BUY", "SELL") and early_reversal:
+        candidate = early_reversal
+        result["early_reversal"] = True
+        result["early_reversal_source"] = "1m+5m momentum+structure"
 
     result["candidate_direction"] = candidate
     result["entry"] = xau_decision.get("entry")
@@ -210,6 +253,7 @@ def compose_research_signal(xau_decision, now):
         code
         for code in xau_decision.get("veto_codes", [])
         if not _research_ignored_veto(code)
+        and not (early_reversal and code == "INSUFFICIENT_SCORE")
     ]
     # Hidden State is not allowed to promote a trade, but explicit reversal
     # evidence may stop Research from chasing a move after a sweep/exhaustion.
