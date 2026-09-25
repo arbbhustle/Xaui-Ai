@@ -190,9 +190,13 @@ def research_history(runtime, now, limit=30):
                 if direction not in ("BUY", "SELL"):
                     continue
 
+                # History is an immutable record of setups that were actionable
+                # under the research rules that existed at that point in time.
+                # Do not re-run today's anti-chase gates over old decisions: doing
+                # so rewrites the visible past whenever Research gating changes.
                 technical_blocks = research_technical_blocks(
                     decision.get("veto_codes", [])
-                ) + _anti_chase_blocks(decision)
+                )
                 if technical_blocks:
                     continue
 
