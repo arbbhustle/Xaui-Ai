@@ -193,3 +193,43 @@ def test_transition_sell_can_pass_when_move_is_not_extended():
     result = compose_research_signal(xau, NOW)
     assert result["direction"] == "SELL"
     assert "EXTENDED_MOVE_NO_FRESH_ENTRY" not in result["veto_codes"]
+
+
+def test_late_sell_after_extended_drop_is_blocked():
+    xau = xau_candidate("SELL")
+    xau["entry"] = 4270.0
+    xau["atr"] = 5.0
+    xau["mode"] = "TREND"
+    xau["hidden_state"] = {
+        "state": "EXPANSION",
+        "dgfe": {"directional_pressure": -40.0},
+        "liquidity": {
+            "reclaim_direction": 0,
+            "swing_high": 4280.0,
+            "swing_low": 4268.0,
+            "displacement": 20.0,
+        },
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "NO_TRADE"
+    assert "LATE_SELL_AFTER_EXTENDED_DROP" in result["veto_codes"]
+
+
+def test_late_buy_after_extended_rally_is_blocked():
+    xau = xau_candidate("BUY")
+    xau["entry"] = 4290.0
+    xau["atr"] = 5.0
+    xau["mode"] = "TREND"
+    xau["hidden_state"] = {
+        "state": "EXPANSION",
+        "dgfe": {"directional_pressure": 40.0},
+        "liquidity": {
+            "reclaim_direction": 0,
+            "swing_high": 4292.0,
+            "swing_low": 4280.0,
+            "displacement": 20.0,
+        },
+    }
+    result = compose_research_signal(xau, NOW)
+    assert result["direction"] == "NO_TRADE"
+    assert "LATE_BUY_AFTER_EXTENDED_RALLY" in result["veto_codes"]
