@@ -133,11 +133,10 @@ def _anti_chase_blocks(xau_decision):
     # recent 5m swing and normalize by the current 5m ATR. This catches the
     # observed late BUY-near-top / SELL-near-bottom pattern even when the last
     # candle itself is no longer a large displacement candle.
-    five = timeframes.get("5min") or {}
     atr = xau_decision.get("atr")
     entry = xau_decision.get("entry")
-    recent_high = five.get("recent_high")
-    recent_low = five.get("recent_low")
+    recent_high = liquidity.get("swing_high")
+    recent_low = liquidity.get("swing_low")
     if (
         sign
         and isinstance(entry, (int, float))
