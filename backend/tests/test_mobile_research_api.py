@@ -178,3 +178,45 @@ def test_research_history_pages_past_500_quiet_evaluations():
     assert len(history["items"]) == 1
     assert history["items"][0]["direction"] == "SELL"
     assert history["items"][0]["cursor"] == 100
+
+
+class EarlyReversalHistoryStore:
+    @staticmethod
+    def get(conn, payload_id):
+        champion = xau_candidate("NO_TRADE")
+        champion["entry"] = 4288.15
+        champion["veto_codes"] = ["INSUFFICIENT_SCORE", "INSUFFICIENT_CALIBRATION"]
+        champion["timeframes"] = {
+            "1min": {"bias": "SELL", "bias_score": -0.32},
+            "5min": {
+                "bias": "SELL",
+                "bias_score": -0.27,
+                "momentum": -0.35,
+                "market_structure": -0.25,
+            },
+        }
+        champion["hidden_state"] = {
+            "state": "EXPANSION",
+            "dgfe": {"directional_pressure": -40.0},
+            "liquidity": {"reclaim_direction": 0, "displacement": 20.0},
+        }
+        return {"champion": champion}
+
+
+class EarlyReversalHistoryRuntime(HistoryRuntime):
+    def __init__(self):
+        self.rows = [{
+            "seq": 1,
+            "at": stamp(NOW - timedelta(minutes=1)),
+            "payload_id": "event-1",
+        }]
+        self.store = EarlyReversalHistoryStore()
+
+
+def test_research_history_archives_early_reversal_setup():
+    history = research_history(EarlyReversalHistoryRuntime(), NOW, limit=30)
+
+    assert len(history["items"]) == 1
+    assert history["items"][0]["direction"] == "SELL"
+    assert history["items"][0]["entry"] == 4288.15
+    assert history["items"][0]["early_reversal"] is True
