@@ -26,6 +26,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.doOnAttach
+import com.google.firebase.messaging.FirebaseMessaging
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
@@ -104,6 +105,7 @@ class MainActivity : AppCompatActivity() {
             ExistingPeriodicWorkPolicy.UPDATE,
             work
         )
+        FirebaseMessaging.getInstance().subscribeToTopic("xau_signals")
     }
     override fun onStart() { super.onStart(); active=true; sync(); handler.postDelayed(pulse,15000) }
     override fun onStop() {

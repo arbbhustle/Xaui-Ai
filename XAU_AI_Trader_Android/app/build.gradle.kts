@@ -1,11 +1,14 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.gms.google-services")
 }
 
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-messaging")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("org.robolectric:robolectric:4.14.1")
@@ -14,7 +17,6 @@ dependencies {
 android {
     namespace = "com.arbnor.xauai"
     compileSdk = 35
-
     defaultConfig {
         applicationId = "com.arbnor.xauai"
         minSdk = 26
@@ -22,20 +24,11 @@ android {
         versionCode = 3
         versionName = "3.0"
     }
-
-    buildFeatures {
-        viewBinding = true
-    }
-    testOptions {
-        unitTests.isIncludeAndroidResources = true
-    }
-
+    buildFeatures { viewBinding = true }
+    testOptions { unitTests.isIncludeAndroidResources = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 }
