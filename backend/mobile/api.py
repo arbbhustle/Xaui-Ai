@@ -21,6 +21,7 @@ from ..realdata.reports import report
 from ..realdata.adapters import synthetic_payload
 from .runtime import Runtime
 from .collection import MOBILE_XAU_FRESHNESS_SECONDS
+from .push import XauPushNotifier
 
 
 FIELDS = frozenset('decision_id direction candidate_direction confidence confidence_kind calibrated_confidence raw_score '
@@ -186,8 +187,19 @@ def create_app(
                     phase = 'COLLECTOR_START'
                     runtime.collector.start()
 
+                phase = 'PUSH_START'
+                push = XauPushNotifier(
+                    lambda now: research_view(runtime, None, now),
+                    clock,
+                )
+                app.state.push = push
+                push.start()
+
                 phase = 'SERVING'
-                yield
+                try:
+                    yield
+                finally:
+                    push.close()
 
         except Exception as exc:
             # Never print exception bodies that could contain provider secrets or DB paths.
