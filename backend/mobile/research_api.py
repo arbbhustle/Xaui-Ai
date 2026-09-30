@@ -268,6 +268,89 @@ def research_history(runtime, now, limit=30):
     }
 
 
+
+def research_performance(runtime, now, limit=200):
+    """Causal 30-minute directional follow-through for recorded Research setups.
+
+    This is research evidence, not broker P/L. A setup is evaluated only when a
+    subsequently archived 1-minute candle is available at least 30 minutes after
+    the setup. No future candle is used before it was present in an archived
+    snapshot.
+    """
+    history = research_history(runtime, now, limit=limit)["items"]
+    evaluated = []
+    pending = 0
+
+    with runtime.read() as conn:
+        snapshots = conn.execute(
+            "SELECT observed_at,payload FROM snapshots WHERE observed_at<=? ORDER BY observed_at",
+            (stamp(now),),
+        ).fetchall()
+
+    closes = []
+    seen = set()
+    for row in snapshots:
+        snapshot = json.loads(row["payload"])
+        observed_at = parse(snapshot["observed_at"])
+        for bar in snapshot.get("frames", {}).get("1min", []):
+            try:
+                close_at = parse(bar["t"])
+                # A 1m candle is causal only after its minute has closed and the
+                # containing snapshot itself was archived.
+                from datetime import timedelta
+                close_at = close_at + timedelta(minutes=1)
+                key = stamp(close_at)
+                if key in seen or close_at > observed_at or close_at > now:
+                    continue
+                price = bar.get("c")
+                if isinstance(price, (int, float)):
+                    seen.add(key)
+                    closes.append((close_at, float(price)))
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+    closes.sort(key=lambda value: value[0])
+
+    from datetime import timedelta
+    horizon = timedelta(minutes=30)
+    tolerance = timedelta(minutes=5)
+    for item in history:
+        direction = item.get("direction")
+        entry = item.get("entry")
+        at_text = item.get("signal_candle_close") or item.get("timestamp_utc")
+        if direction not in ("BUY", "SELL") or not isinstance(entry, (int, float)) or not at_text:
+            pending += 1
+            continue
+        at = parse(at_text)
+        target = at + horizon
+        match = next((price for close_at, price in closes if target <= close_at <= target + tolerance), None)
+        if match is None:
+            pending += 1
+            continue
+        signed_move = (match - float(entry)) * (1 if direction == "BUY" else -1)
+        evaluated.append(signed_move)
+
+    wins = sum(value > 0 for value in evaluated)
+    losses = sum(value < 0 for value in evaluated)
+    breakeven = sum(value == 0 for value in evaluated)
+    count = len(evaluated)
+    return {
+        "profile": "XAU_ONLY_RESEARCH_V1",
+        "evidence": "30_MIN_DIRECTIONAL_FOLLOW_THROUGH",
+        "research_only": True,
+        "profitability_claim": False,
+        "recorded_setups": len(history),
+        "evaluated_setups": count,
+        "pending_setups": pending,
+        "wins": wins,
+        "losses": losses,
+        "breakeven": breakeven,
+        "win_rate_pct": (wins / count * 100.0) if count else None,
+        "average_signed_move_usd": (sum(evaluated) / count) if count else None,
+        "horizon_minutes": 30,
+        "note": "Directional follow-through only; not broker P/L or guaranteed performance.",
+    }
+
+
 def research_history_diagnostics(runtime, now, sample_limit=12):
     """Read-only explanation of why recent ledger evaluations enter history."""
     counts = {
@@ -418,6 +501,7 @@ def research_view(runtime, research_runtime, now):
     # Production Runtime has the read/store interfaces required for ledger history.
     if hasattr(runtime, "read") and hasattr(runtime, "store"):
         result["research_history"] = research_history(runtime, now, limit=30)
+        result["research_performance"] = research_performance(runtime, now)
         result["research_history_diagnostics"] = research_history_diagnostics(runtime, now)
     else:
         result["research_history"] = {
