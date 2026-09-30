@@ -493,7 +493,8 @@ def research_view(runtime, research_runtime, now):
     # Production Runtime has the read/store interfaces required for ledger history.
     if hasattr(runtime, "read") and hasattr(runtime, "store"):
         result["research_history"] = research_history(runtime, now, limit=30)
-        result["research_performance"] = research_performance(runtime, now)
+        # Keep current-signal polling lightweight. Research performance is
+        # intentionally served by its own endpoint and must not block Home sync.
         result["research_history_diagnostics"] = research_history_diagnostics(runtime, now)
     else:
         result["research_history"] = {
