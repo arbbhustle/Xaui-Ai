@@ -70,6 +70,12 @@ class ApiClient(private val transport: ((String) -> Any)? = null) {
             return value
         } catch(e: ApiFailure) { throw e } catch(_: Exception) { throw ApiFailure("Malformed response") }
     }
+    fun fetchResearchPerformance(endpoint: String): JSONObject {
+        val signalAddress=signalEndpoint(endpoint)
+        val raw=read(sibling(signalAddress, "research-performance"))
+        return raw as? JSONObject ?: throw ApiFailure("Malformed research performance")
+    }
+
     fun fetch(endpoint: String): Dashboard {
         val signalAddress=signalEndpoint(endpoint)
         val signal = read(signalAddress) as? JSONObject ?: throw ApiFailure("Malformed signal response")
