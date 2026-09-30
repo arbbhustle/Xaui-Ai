@@ -10,7 +10,7 @@ import math
 import re
 import sqlite3
 
-from backend.mobile.research_api import research_view
+from backend.mobile.research_api import research_view, research_performance
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
@@ -273,6 +273,10 @@ def create_app(
         r = runtime()
         now = clock()
         return research_view(r, None, now)
+
+    @app.get('/research-performance')
+    def research_performance_view():
+        return public(research_performance(runtime(), clock()))
 
     @app.get('/performance')
     def performance():
