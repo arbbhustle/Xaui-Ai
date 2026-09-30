@@ -259,11 +259,13 @@ class MainActivity : AppCompatActivity() {
         if(historyLimit<d.history.size) card("More history") { action("Show next 30") { historyLimit+=30; render(true) } }
     }
     private fun analytics(d: Dashboard) {
-        card("DEMO Analytics","Historical results are not a promise of future performance") {
-            action(if(cohort=="CHAMPION") "Champion · switch to Challenger" else "Challenger research · switch to Champion") { cohort=if(cohort=="CHAMPION") "ADAPTIVE_CHALLENGER" else "CHAMPION"; render() }
+        val performanceFields=Fields(d.performance ?: JSONObject())
+        val researchAnalytics=performanceFields.text("profile") == "XAU_ONLY_RESEARCH_V1"
+        card(if(researchAnalytics) "XAU Research Analytics" else "DEMO Analytics","Historical results are not a promise of future performance") {
+            if(!researchAnalytics) action(if(cohort=="CHAMPION") "Champion · switch to Challenger" else "Challenger research · switch to Champion") { cohort=if(cohort=="CHAMPION") "ADAPTIVE_CHALLENGER" else "CHAMPION"; render() }
             rows(Presentation.analytics(d.performance,cohort))
         }
-        val f=Fields(d.performance ?: JSONObject())
+        val f=performanceFields
         val evidence=listOf(DisplayRow("Real evaluation cycles",Presentation.number(f.number("real_forward_evaluation_cycles"),0)),DisplayRow("Real five-minute decisions",Presentation.number(f.number("real_five_minute_decisions"),0))).filter { it.value != Presentation.MISSING }
         if(evidence.isNotEmpty()) card("Forward evidence") { rows(evidence) }
         val qualified=Presentation.analytics(d.performance,cohort).none { it.value=="INSUFFICIENT_FORWARD_DATA" }
