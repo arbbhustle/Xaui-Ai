@@ -83,7 +83,14 @@ class ApiClient(private val transport: ((String) -> Any)? = null) {
             // are a separate evidence surface and must never make current-signal
             // polling slower.
             val history = Presentation.history(signal.opt("research_history"))
-            return Dashboard(signal, signal.optJSONObject("research_performance"), history, Instant.now(), warnings)
+            val performance = try {
+                read(sibling(signalAddress, "research-performance")) as? JSONObject
+                    ?: throw ApiFailure("Malformed research performance")
+            } catch (_: Exception) {
+                warnings.add("Research analytics unavailable for this sync")
+                null
+            }
+            return Dashboard(signal, performance, history, Instant.now(), warnings)
         }
         val performance = try { read(sibling(signalAddress, "performance")) as? JSONObject ?: throw ApiFailure("Malformed performance") }
             catch (_: Exception) { warnings.add("Performance unavailable for this sync"); null }
