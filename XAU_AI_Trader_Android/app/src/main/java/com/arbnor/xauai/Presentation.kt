@@ -176,6 +176,22 @@ object Presentation {
     fun analytics(root: JSONObject?, cohort: String): List<DisplayRow> {
         if (root == null) return listOf(DisplayRow("Evidence", "INSUFFICIENT_FORWARD_DATA"), DisplayRow("Performance", "Not enough data"))
         val f = Fields(root)
+        if (f.text("profile") == "XAU_ONLY_RESEARCH_V1") {
+            val evaluated = f.number("evaluated_setups")?.toInt() ?: 0
+            val rate = f.number("win_rate_pct")
+            return listOf(
+                DisplayRow("Evidence", f.text("evidence") ?: "30_MIN_DIRECTIONAL_FOLLOW_THROUGH"),
+                DisplayRow("Recorded research setups", number(f.number("recorded_setups"), 0)),
+                DisplayRow("Evaluated after 30 min", number(f.number("evaluated_setups"), 0)),
+                DisplayRow("Pending", number(f.number("pending_setups"), 0)),
+                DisplayRow("Wins", number(f.number("wins"), 0)),
+                DisplayRow("Losses", number(f.number("losses"), 0)),
+                DisplayRow("Breakeven", number(f.number("breakeven"), 0)),
+                DisplayRow("30 min directional win rate", if (evaluated > 0 && rate != null) "${number(rate, 1)}% · observed DEMO sample" else MISSING),
+                DisplayRow("Average signed move (USD)", if (evaluated > 0) number(f.number("average_signed_move_usd"), 2) else MISSING),
+                DisplayRow("Method", "Price direction 30 minutes after each recorded setup · research only")
+            )
+        }
         val group = f.obj("cohorts.$cohort")
         // Never use unlabelled legacy totals for Challenger or combine cohorts.
         val data = Fields(group?.optJSONObject("metrics") ?: if (cohort == "CHAMPION" && f.obj("cohorts") == null) root else JSONObject())
