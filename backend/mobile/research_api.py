@@ -270,64 +270,56 @@ def research_history(runtime, now, limit=30):
 
 
 def research_performance(runtime, now, limit=200):
-    """Causal 30-minute directional follow-through for recorded Research setups.
+    """Bounded-memory 30-minute follow-through for recorded Research setups."""
+    from datetime import timedelta
 
-    This is research evidence, not broker P/L. A setup is evaluated only when a
-    subsequently archived 1-minute candle is available at least 30 minutes after
-    the setup. No future candle is used before it was present in an archived
-    snapshot.
-    """
     history = research_history(runtime, now, limit=limit)["items"]
     evaluated = []
     pending = 0
-
-    with runtime.read() as conn:
-        snapshots = conn.execute(
-            "SELECT observed_at,payload FROM snapshots WHERE observed_at<=? ORDER BY observed_at",
-            (stamp(now),),
-        ).fetchall()
-
-    closes = []
-    seen = set()
-    for row in snapshots:
-        snapshot = json.loads(row["payload"])
-        observed_at = parse(snapshot["observed_at"])
-        for bar in snapshot.get("frames", {}).get("1min", []):
-            try:
-                close_at = parse(bar["t"])
-                # A 1m candle is causal only after its minute has closed and the
-                # containing snapshot itself was archived.
-                from datetime import timedelta
-                close_at = close_at + timedelta(minutes=1)
-                key = stamp(close_at)
-                if key in seen or close_at > observed_at or close_at > now:
-                    continue
-                price = bar.get("c")
-                if isinstance(price, (int, float)):
-                    seen.add(key)
-                    closes.append((close_at, float(price)))
-            except (KeyError, TypeError, ValueError, AttributeError):
-                continue
-    closes.sort(key=lambda value: value[0])
-
-    from datetime import timedelta
     horizon = timedelta(minutes=30)
     tolerance = timedelta(minutes=5)
-    for item in history:
-        direction = item.get("direction")
-        entry = item.get("entry")
-        at_text = item.get("signal_candle_close") or item.get("timestamp_utc")
-        if direction not in ("BUY", "SELL") or not isinstance(entry, (int, float)) or not at_text:
-            pending += 1
-            continue
-        at = parse(at_text)
-        target = at + horizon
-        match = next((price for close_at, price in closes if target <= close_at <= target + tolerance), None)
-        if match is None:
-            pending += 1
-            continue
-        signed_move = (match - float(entry)) * (1 if direction == "BUY" else -1)
-        evaluated.append(signed_move)
+
+    # Never load the snapshots table into memory. For each recorded setup, read
+    # only the first archived snapshot in its small outcome window.
+    with runtime.read() as conn:
+        for item in history:
+            direction = item.get("direction")
+            entry = item.get("entry")
+            at_text = item.get("signal_candle_close") or item.get("timestamp_utc")
+            if direction not in ("BUY", "SELL") or not isinstance(entry, (int, float)) or not at_text:
+                pending += 1
+                continue
+            at = parse(at_text)
+            target = at + horizon
+            if target > now:
+                pending += 1
+                continue
+            row = conn.execute(
+                """SELECT observed_at,payload FROM snapshots
+                   WHERE observed_at>=? AND observed_at<=? AND observed_at<=?
+                   ORDER BY observed_at LIMIT 1""",
+                (stamp(target), stamp(target + tolerance), stamp(now)),
+            ).fetchone()
+            if row is None:
+                pending += 1
+                continue
+            snapshot = json.loads(row["payload"])
+            observed_at = parse(snapshot["observed_at"])
+            candidates = []
+            for bar in snapshot.get("frames", {}).get("1min", []):
+                try:
+                    close_at = parse(bar["t"]) + timedelta(minutes=1)
+                    price = bar.get("c")
+                    if target <= close_at <= target + tolerance and close_at <= observed_at and isinstance(price, (int, float)):
+                        candidates.append((close_at, float(price)))
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue
+            if not candidates:
+                pending += 1
+                continue
+            _, match = min(candidates, key=lambda value: value[0])
+            signed_move = (match - float(entry)) * (1 if direction == "BUY" else -1)
+            evaluated.append(signed_move)
 
     wins = sum(value > 0 for value in evaluated)
     losses = sum(value < 0 for value in evaluated)
