@@ -50,6 +50,8 @@ class MainActivity : AppCompatActivity() {
     private var message = "Loading backend information…"
     private var page = 0
     private var cohort = "CHAMPION"
+    private var researchPerformance: JSONObject? = null
+    private var analyticsFetching = false
     private var historyLimit = 30
     private lateinit var content: LinearLayout
     private lateinit var scroll: ScrollView
@@ -144,6 +146,23 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+    private fun fetchResearchAnalytics() {
+        if (analyticsFetching || !active || page != 2) return
+        analyticsFetching=true
+        render(true)
+        executor.submit {
+            var result: JSONObject?=null
+            try { result=api.fetchResearchPerformance(endpoint) } catch (_: Exception) { }
+            val captured=result
+            handler.post {
+                if(!active || isDestroyed) return@post
+                analyticsFetching=false
+                if(captured!=null) researchPerformance=captured
+                if(page==2) render(true)
+            }
+        }
+    }
+
     private fun dp(v: Int)=(v*resources.displayMetrics.density).toInt()
     private fun text(value: String,size: Float=16f,color: Int=white,bold: Boolean=false)=TextView(this).apply {
         text=value; textSize=size; setTextColor(color); setLineSpacing(dp(3).toFloat(),1f)
@@ -188,7 +207,12 @@ class MainActivity : AppCompatActivity() {
                 text=label; textSize=12f; gravity=Gravity.CENTER; setTextColor(if(page==index) gold else muted)
                 minHeight=dp(56); isSelected=page==index; isClickable=true; isFocusable=true
                 contentDescription="$label${if(page==index) ", selected" else ""}"
-                setOnClickListener { editingEndpoint=false; page=index; render() }
+                setOnClickListener {
+                    editingEndpoint=false
+                    page=index
+                    render()
+                    if(index==2) fetchResearchAnalytics()
+                }
             },LinearLayout.LayoutParams(0,-1,1f))
         }
         scroll.post { if(!isDestroyed) scroll.scrollTo(0,y) }
@@ -259,16 +283,18 @@ class MainActivity : AppCompatActivity() {
         if(historyLimit<d.history.size) card("More history") { action("Show next 30") { historyLimit+=30; render(true) } }
     }
     private fun analytics(d: Dashboard) {
-        val performanceFields=Fields(d.performance ?: JSONObject())
+        val performance = researchPerformance ?: d.performance
+        val performanceFields=Fields(performance ?: JSONObject())
         val researchAnalytics=performanceFields.text("profile") == "XAU_ONLY_RESEARCH_V1"
         card(if(researchAnalytics) "XAU Research Analytics" else "DEMO Analytics","Historical results are not a promise of future performance") {
-            if(!researchAnalytics) action(if(cohort=="CHAMPION") "Champion · switch to Challenger" else "Challenger research · switch to Champion") { cohort=if(cohort=="CHAMPION") "ADAPTIVE_CHALLENGER" else "CHAMPION"; render() }
-            rows(Presentation.analytics(d.performance,cohort))
+            if(analyticsFetching && researchPerformance==null) addView(text("Loading XAU research analytics…",14f,muted))
+            if(!researchAnalytics && !analyticsFetching) action(if(cohort=="CHAMPION") "Champion · switch to Challenger" else "Challenger research · switch to Champion") { cohort=if(cohort=="CHAMPION") "ADAPTIVE_CHALLENGER" else "CHAMPION"; render() }
+            rows(Presentation.analytics(performance,cohort))
         }
         val f=performanceFields
         val evidence=listOf(DisplayRow("Real evaluation cycles",Presentation.number(f.number("real_forward_evaluation_cycles"),0)),DisplayRow("Real five-minute decisions",Presentation.number(f.number("real_five_minute_decisions"),0))).filter { it.value != Presentation.MISSING }
         if(evidence.isNotEmpty()) card("Forward evidence") { rows(evidence) }
-        val qualified=Presentation.analytics(d.performance,cohort).none { it.value=="INSUFFICIENT_FORWARD_DATA" }
+        val qualified=Presentation.analytics(performance,cohort).none { it.value=="INSUFFICIENT_FORWARD_DATA" }
         val breakdown=details(f.obj("cohorts.$cohort.by_regime"))+details(f.obj("cohorts.$cohort.by_session"))
         if(qualified && breakdown.isNotEmpty()) card("Regime / Session Breakdown",cohort.replace('_',' ')) { rows(breakdown) }
     }
