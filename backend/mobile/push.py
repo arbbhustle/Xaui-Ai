@@ -4,12 +4,13 @@ Push delivery is operational only: it never changes the immutable strategy,
 research projection, or evidence database.
 """
 from pathlib import Path
+import logging
 import os
 import threading
-import time
 
 TOPIC = "xau_signals"
 DEFAULT_CREDENTIAL = "/etc/secrets/firebase-service-account.json"
+log = logging.getLogger("xau.fcm")
 
 
 class XauPushNotifier:
@@ -34,6 +35,7 @@ class XauPushNotifier:
 
         if not firebase_admin._apps:
             firebase_admin.initialize_app(credentials.Certificate(str(self._credential_path())))
+            log.warning("FCM_INITIALIZED topic=%s", TOPIC)
 
         direction = signal["direction"]
         entry = signal.get("entry")
@@ -51,7 +53,9 @@ class XauPushNotifier:
             },
             android=messaging.AndroidConfig(priority="high"),
         )
-        messaging.send(message)
+        message_id = messaging.send(message)
+        log.warning("FCM_SENT id=%s direction=%s entry=%s", message_id, direction, entry)
+        return message_id
 
     @staticmethod
     def key(signal):
@@ -66,6 +70,8 @@ class XauPushNotifier:
 
     def check_once(self):
         if not self.configured():
+            self.failure = "FCM_NOT_CONFIGURED"
+            log.error("FCM_NOT_CONFIGURED credential_path=%s", self._credential_path())
             return "NOT_CONFIGURED"
         signal = self.view(self.clock())
         key = self.key(signal)
@@ -73,21 +79,32 @@ class XauPushNotifier:
             return "NO_SIGNAL"
         if key == self.last_key:
             return "DUPLICATE"
+        log.warning("FCM_SIGNAL direction=%s entry=%s key=%s", signal.get("direction"), signal.get("entry"), key)
         try:
             self._send(signal)
-        except Exception:
+        except Exception as exc:
             self.failure = "FCM_SEND_FAILED"
+            log.exception("FCM_SEND_FAILED type=%s error=%s", type(exc).__name__, exc)
             return self.failure
         self.last_key = key
         self.failure = None
         return "SENT"
 
     def start(self):
-        if self.thread is not None or not self.configured():
+        if self.thread is not None:
             return
+        if not self.configured():
+            self.failure = "FCM_NOT_CONFIGURED"
+            log.error("FCM_DISABLED credential_missing path=%s", self._credential_path())
+            return
+        log.warning("FCM_NOTIFIER_STARTED topic=%s interval_seconds=%s", TOPIC, self.interval)
         def loop():
             while not self.stop.is_set():
-                self.check_once()
+                try:
+                    self.check_once()
+                except Exception as exc:
+                    self.failure = "FCM_LOOP_FAILED"
+                    log.exception("FCM_LOOP_FAILED type=%s error=%s", type(exc).__name__, exc)
                 self.stop.wait(self.interval)
         self.thread = threading.Thread(target=loop, name="xau-fcm", daemon=True)
         self.thread.start()
@@ -96,3 +113,4 @@ class XauPushNotifier:
         self.stop.set()
         if self.thread:
             self.thread.join(timeout=2)
+        log.warning("FCM_NOTIFIER_STOPPED")
