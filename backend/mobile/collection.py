@@ -268,13 +268,24 @@ class MobileCollector(ForwardRunner):
         if self.thread is not None:return
         def loop():
             while not self.stop.is_set():
-                now=self.clock()
-                if not market_closed(now):self._once()
+                try:
+                    now=self.clock()
+                    if not market_closed(now):self._once()
+                except Exception:
+                    # Keep the single-owner scheduler alive after an unexpected
+                    # operational failure. _once() already sanitizes normal
+                    # collection/integrity failures; this is a final guard for
+                    # errors before that boundary (for example storage probes).
+                    self.failure='COLLECTION_OR_INTEGRITY_FAILURE'
                 # Basic-safe cadence: one steady-state API request every two minutes,
                 # aligned just after a UTC 1min candle close. No catch-up bursts.
-                now=self.clock();epoch=now.timestamp()
-                next_tick=((int(epoch)//120)+1)*120+5
-                self.stop.wait(max(1,next_tick-epoch))
+                try:
+                    now=self.clock();epoch=now.timestamp()
+                    next_tick=((int(epoch)//120)+1)*120+5
+                    self.stop.wait(max(1,next_tick-epoch))
+                except Exception:
+                    self.failure='COLLECTION_OR_INTEGRITY_FAILURE'
+                    self.stop.wait(5)
         self.thread=threading.Thread(target=loop,name='mobile-xau',daemon=True)
         self.thread.start()
 
@@ -289,6 +300,13 @@ class MobileCollector(ForwardRunner):
             request=conn.execute('SELECT status,at FROM forward_requests ORDER BY at DESC LIMIT 1').fetchone()
         spec=next(s for s in self.runtime.specs if s.channel=='xau')
         age=(now-parse(value['observed_at'])).total_seconds() if value else None
+        attempt_age=(now-parse(request['at'])).total_seconds() if request else None
+        thread_alive=bool(self.thread and self.thread.is_alive())
+        session_closed=market_closed(now)
+        scheduler_status=('DISABLED' if not self.runtime.collection_enabled else
+                          'NOT_RUNNING' if not thread_alive else
+                          'MARKET_CLOSED' if session_closed else
+                          'DEGRADED' if self.failure else 'RUNNING')
         valid=bool(value and 0<=age<MOBILE_XAU_FRESHNESS_SECONDS and parse(value['received_at'])<=now and value.get('native',{}).get('live_verified')
                    and spec.approved_at(now) and request and request['status']=='COMPLETE' and not self.failure
                    and self.runtime.collection_enabled and bool(os.environ.get('TWELVE_DATA_API_KEY','').strip())
@@ -301,5 +319,10 @@ class MobileCollector(ForwardRunner):
                 'data_mode':'LIVE_DATA' if valid else 'UNAVAILABLE',
                 'status':'HEALTHY' if valid else 'UNAVAILABLE',
                 'last_attempt_status':self.failure or (request['status'] if request else 'NOT_ATTEMPTED'),
+                'last_attempt_at':request['at'] if request else None,
+                'last_attempt_age_seconds':attempt_age,
+                'scheduler_status':scheduler_status,
+                'collector_thread_alive':thread_alive,
+                'market_closed':session_closed,
                 'validation_checks':value.get('native',{}).get('checks',[]) if value else [],
                 'symbol':'XAU/USD','vendor':'twelve_data','channel':'xau'}
