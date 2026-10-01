@@ -164,6 +164,20 @@ def test_budget_prevents_requests(tmp_path,monkeypatch):
         assert calls==[]
 
 
+def test_status_exposes_attempt_and_scheduler_diagnostics(tmp_path,monkeypatch):
+    approve(monkeypatch);current=[NOW]
+    with Runtime(tmp_path/'m.db') as runtime:
+        wire(runtime,monkeypatch,current)
+        runtime.collector._once()
+        xau=system(runtime,current[0])['xau']
+        assert xau['last_attempt_at']==stamp(NOW)
+        assert xau['last_attempt_age_seconds']==0
+        assert xau['last_attempt_status']=='COMPLETE'
+        assert xau['collector_thread_alive'] is False
+        assert xau['scheduler_status']=='NOT_RUNNING'
+        assert isinstance(xau['market_closed'],bool)
+
+
 def test_approval_change_requires_new_database(tmp_path,monkeypatch):
     path=tmp_path/'m.db'
     with Runtime(path):pass
