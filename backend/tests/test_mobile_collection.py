@@ -358,6 +358,21 @@ def test_4h_requires_explicit_native_anchor():
         StrictXauAdapter._aggregate([],'4h')
 
 
+def test_mixed_native_4h_anchor_selects_recent_verified_window():
+    from backend.domain import parse
+    last=NOW.replace(hour=8,minute=0,second=0,microsecond=0)
+    rows=[]
+    for i in range(61):
+        at=last-timedelta(hours=4*(60-i))
+        rows.append({'t':stamp(at),'o':2000+i,'h':2002+i,'l':1999+i,'c':2001+i})
+    extra=parse(rows[0]['t'])-timedelta(hours=3)
+    rows.insert(0,{'t':stamp(extra),'o':1990,'h':1992,'l':1989,'c':1991})
+    selected,anchor=StrictXauAdapter._native_4h_bootstrap_window(rows,NOW)
+    assert anchor==0
+    assert len(selected)==61
+    assert all(int(parse(row['t']).timestamp())%14400==0 for row in selected)
+
+
 def test_non_epoch_native_anchor_still_fails_closed_in_frozen_validator(tmp_path,monkeypatch):
     # The shared frozen domain validator requires epoch alignment. Do not silently
     # shift provider timestamps or weaken that gate in this aggregation-only patch.
