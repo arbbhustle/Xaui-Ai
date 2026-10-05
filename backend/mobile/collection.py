@@ -32,6 +32,44 @@ def enabled():
 
 MOBILE_XAU_FRESHNESS_SECONDS = 240
 
+# Public diagnostics may expose only exact, code-authored validation labels.
+# Never surface exception bodies, provider payloads, URLs, credentials, or
+# arbitrary third-party text through /system-status.
+SAFE_XAU_VALIDATION_CODES = frozenset({
+    'UNSAFE_PROVIDER_RESPONSE',
+    'NONREAL_PROVIDER_RESPONSE',
+    'CANDLE_COUNT_EXCEEDED',
+    'INVALID_CANDLE_CLOCK',
+    'WRONG_MARKET_SYMBOL',
+    'WRONG_CURRENCY_PAIR',
+    'UNVERIFIED_SOURCE_TIMEZONE',
+    'FUTURE_CANDLE',
+    'DUPLICATE_CANDLE',
+    'INVALID_NATIVE_4H_ANCHOR',
+    'UNCLOSED_NATIVE_4H_ANCHOR',
+    'AMBIGUOUS_NATIVE_4H_ANCHOR',
+    'NATIVE_4H_ANCHOR_REQUIRED',
+    'ALIGNMENT_PROVIDER_NOT_APPROVED',
+    'ALIGNMENT_EVIDENCE_REQUIRED',
+    'UNSUPPORTED_4H_ANCHOR',
+    'NONCAUSAL_BOOTSTRAP',
+    'BOOTSTRAP_HASH_REQUIRED',
+    'BOOTSTRAP_COVERAGE_REQUIRED',
+    'UNCLOSED_BOOTSTRAP',
+    'INVALID_BOOTSTRAP_CANDLES',
+    'UNVERIFIED_ALIGNMENT_PROVENANCE',
+    'XAU_VALIDATION_FAILED',
+    'ANCHOR_CHANGE_REQUIRES_NEW_EPOCH',
+})
+
+
+def safe_xau_validation_code(exc):
+    if type(exc) is ValueError and len(exc.args) == 1 and type(exc.args[0]) is str:
+        code = exc.args[0]
+        if code in SAFE_XAU_VALIDATION_CODES:
+            return code
+    return None
+
 
 def xau_spec(candidate):
     """Incomplete or invalid attestations never authorize an HTTP request."""
@@ -197,6 +235,7 @@ class StrictXauAdapter(NativeAdapter):
 class ReceiptValidatedCollector(RealCollector):
     def _scoped_read(self,spec,started,inner):
         adapter=self.providers[spec.name]
+        self.last_validation_failure=None
         try:
             acquisition=adapter.acquire(started);received=self.clock()
             if received<started:raise ValueError('CLOCK_REVERSED')
@@ -214,12 +253,16 @@ class ReceiptValidatedCollector(RealCollector):
             allowed={'PROVIDER_NOT_APPROVED','CREDENTIAL_UNAVAILABLE','INVALID_CREDENTIAL_FORMAT','AUTH_OR_ENTITLEMENT_DENIED',
                 'RATE_LIMITED','HTTP_PROVIDER_FAILURE','PROVIDER_TIMEOUT','PROVIDER_REJECTED','PROVIDER_READ_FAILED',
                 'RESPONSE_TOO_LARGE','MALFORMED_PAYLOAD','NO_CLOSED_CANDLES'}
-            inner.append((None,exc.code if exc.code in allowed else 'PROVIDER_FAILED',
+            self.last_validation_failure=exc.code if exc.code in allowed else 'PROVIDER_FAILED'
+            inner.append((None,self.last_validation_failure,
                           min(900,max(0,exc.retry_after)) if type(exc.retry_after) is int else 0))
-        except Exception:inner.append((None,'INVALID_OR_UNSAFE_PROVIDER_DATA',0))
+        except Exception as exc:
+            self.last_validation_failure=safe_xau_validation_code(exc) or 'UNCLASSIFIED_VALIDATION_FAILURE'
+            inner.append((None,'INVALID_OR_UNSAFE_PROVIDER_DATA',0))
 
     def _read(self,spec,started,done,box):
         inner=[]
+        self.last_validation_failure=None
         try:
             if self.providers[spec.name].alignment_version==ALIGNMENT_V1:self._scoped_read(spec,started,inner)
             else:super()._read(spec,started,threading.Event(),inner)
@@ -321,6 +364,8 @@ class MobileCollector(ForwardRunner):
                 'last_attempt_status':self.failure or (request['status'] if request else 'NOT_ATTEMPTED'),
                 'last_attempt_at':request['at'] if request else None,
                 'last_attempt_age_seconds':attempt_age,
+                'last_validation_failure':getattr(self.collector,'last_validation_failure',None),
+                'validator_version':self.runtime.validator_version,
                 'scheduler_status':scheduler_status,
                 'collector_thread_alive':thread_alive,
                 'market_closed':session_closed,
