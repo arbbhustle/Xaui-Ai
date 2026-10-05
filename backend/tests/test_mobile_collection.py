@@ -204,14 +204,17 @@ def test_approval_change_requires_new_database(tmp_path,monkeypatch):
 
 def test_enabled_render_lifespan_and_gets_are_read_only(tmp_path,monkeypatch):
     from backend.mobile.collection import MobileCollector
+    from backend.realdata.store import RealStore
     approve(monkeypatch)
     monkeypatch.setenv('RENDER','true');monkeypatch.setenv('MOBILE_DISK_PATH',str(tmp_path))
     monkeypatch.setattr(Path,'is_mount',lambda p:True)
     starts=[]
     monkeypatch.setattr(MobileCollector,'start',lambda self:starts.append(self))
     monkeypatch.setattr(NativeHTTP,'read',lambda *a,**k:pytest.fail('GET acquired data'))
+    monkeypatch.setattr(RealStore,'verify',lambda *a,**k:pytest.fail('Render startup performed full history verify'))
     with TestClient(create_app(tmp_path/'m.db',clock=lambda:NOW)) as client:
         assert len(starts)==1
+        assert client.app.state.runtime.replay['scope']=='LATEST_TAIL_RENDER_STARTUP'
         for _ in range(3):
             assert client.get('/health').json()['collection_enabled']
             assert client.get('/signal').json()['direction']=='NO_TRADE'
