@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 import os
 import threading
 
-from ..domain import canonical, parse, stamp, INTERVALS, market_closed
+from ..domain import canonical, digest, parse, stamp, INTERVALS, market_closed, allowed_session_gap
 from ..forward.contracts import normalize
 from ..forward.providers import ProviderFailure
 from ..forward.runner import ForwardRunner
@@ -135,6 +135,44 @@ class StrictXauAdapter(NativeAdapter):
             raise ValueError('AMBIGUOUS_NATIVE_4H_ANCHOR')
         return offsets.pop()
 
+    @classmethod
+    def _native_4h_bootstrap_window(cls,rows,now):
+        """Select a recent single-anchor native 4h window without inventing timestamps."""
+        seconds=INTERVALS['4h'];validated=[]
+        seen=set()
+        for row in rows:
+            at=parse(row['t']);epoch=int(at.timestamp())
+            if at.utcoffset()!=timedelta(0) or at.microsecond or epoch%60:
+                raise ValueError('INVALID_NATIVE_4H_ANCHOR')
+            if at+timedelta(seconds=seconds)>now:
+                raise ValueError('UNCLOSED_NATIVE_4H_ANCHOR')
+            if epoch in seen:raise ValueError('AMBIGUOUS_NATIVE_4H_ANCHOR')
+            seen.add(epoch);validated.append((at,row,epoch%seconds))
+        candidates=[]
+        for offset in (0,3600,7200,10800):
+            group=[(at,row) for at,row,phase in validated if phase==offset]
+            group.sort(key=lambda item:item[0])
+            segment=[]
+            for at,row in group:
+                if segment:
+                    expected=segment[-1][0]+timedelta(seconds=seconds)
+                    if at!=expected and not (at>expected and allowed_session_gap(expected,at,seconds)):
+                        segment=[]
+                segment.append((at,row))
+                if len(segment)>125:segment=segment[-125:]
+                if len(segment)>=60:
+                    latest_close=segment[-1][0]+timedelta(seconds=seconds)
+                    age=(now-latest_close).total_seconds()
+                    if 0<=age<seconds+90:
+                        candidates.append((segment[-1][0],len(segment),offset,list(segment)))
+        if not candidates:raise ValueError('AMBIGUOUS_NATIVE_4H_ANCHOR')
+        _,_,offset,segment=max(candidates,key=lambda item:(item[0],item[1]))
+        selected=[row for _,row in segment[-125:]]
+        # Reuse the strict checker on the final evidence window.
+        if cls._native_4h_anchor(selected,now)!=offset:
+            raise ValueError('AMBIGUOUS_NATIVE_4H_ANCHOR')
+        return selected,offset
+
     @staticmethod
     def _aggregate(minutes,interval,anchor_seconds=None):
         seconds=INTERVALS[interval];width=seconds//60;buckets={}
@@ -161,18 +199,21 @@ class StrictXauAdapter(NativeAdapter):
         # Subsequent cycles use one 1min request and derive newly closed higher bars.
         if not self._mobile_frames:
             first=super()._xau(now)
-            anchor=self._native_4h_anchor(first.envelope['value']['4h'],now)
-            self._mobile_frames={tf:list(first.envelope['value'][tf]) for tf in INTERVALS}
+            native_4h,anchor=self._native_4h_bootstrap_window(first.envelope['value']['4h'],now)
+            value={tf:list(first.envelope['value'][tf]) for tf in INTERVALS}
+            value['4h']=native_4h
+            envelope=dict(first.envelope,value=value,revision_id=digest(value))
+            self._mobile_frames={tf:list(value[tf]) for tf in INTERVALS}
             self._mobile_4h_anchor=anchor
             if self.alignment_version==ALIGNMENT_V1:
                 self._mobile_anchor_evidence={'version':ALIGNMENT_V1,'anchor_seconds':anchor,
                     'provider_identity':self.spec.identity,'bootstrap_at':stamp(now),
-                    'native_bars':deepcopy(first.envelope['value']['4h']),'raw_hash':first.raw_hash}
+                    'native_bars':deepcopy(native_4h),'raw_hash':first.raw_hash}
             details=dict(first.details,mobile_request_mode='BASIC_BOOTSTRAP_5_REQUESTS',
                          derived_intervals=[],aggregation_anchors_seconds={'4h':anchor},
-                         aggregation_anchor_source='NATIVE_4H_BOOTSTRAP')
+                         aggregation_anchor_source='NATIVE_4H_BOOTSTRAP_FILTERED')
             if self._mobile_anchor_evidence:details[META]=self._mobile_anchor_evidence
-            return Acquisition(first.envelope,first.raw_hash,first.verification,details)
+            return Acquisition(envelope,first.raw_hash,first.verification,details)
 
         response=self.request('/time_series',{'symbol':'XAU/USD','interval':'1min','timezone':'UTC','outputsize':1000},now)
         body=response.payload;meta=body.get('meta',{})
