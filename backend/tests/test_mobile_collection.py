@@ -173,9 +173,25 @@ def test_status_exposes_attempt_and_scheduler_diagnostics(tmp_path,monkeypatch):
         assert xau['last_attempt_at']==stamp(NOW)
         assert xau['last_attempt_age_seconds']==0
         assert xau['last_attempt_status']=='COMPLETE'
+        assert xau['last_validation_failure'] is None
+        assert xau['validator_version']=='legacy'
         assert xau['collector_thread_alive'] is False
         assert xau['scheduler_status']=='NOT_RUNNING'
         assert isinstance(xau['market_closed'],bool)
+
+
+def test_status_exposes_safe_xau_validation_failure(tmp_path,monkeypatch):
+    approve(monkeypatch)
+    monkeypatch.setenv('MOBILE_XAU_VALIDATOR','mobile-twelve-xau-4h-v1')
+    def wrong_symbol(data,tf):
+        if tf=='1min':data['meta']['symbol']='XAG/USD'
+    with Runtime(tmp_path/'m.db') as runtime:
+        wire(runtime,monkeypatch,[NOW],wrong_symbol)
+        runtime.collector._once()
+        xau=system(runtime,NOW)['xau']
+        assert xau['last_attempt_status']=='INVALID_OR_UNSAFE_PROVIDER_DATA'
+        assert xau['last_validation_failure']=='WRONG_MARKET_SYMBOL'
+        assert xau['validator_version']=='mobile-twelve-xau-4h-v1'
 
 
 def test_approval_change_requires_new_database(tmp_path,monkeypatch):
