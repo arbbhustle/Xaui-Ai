@@ -373,6 +373,34 @@ def test_native_4h_diagnostics_expose_only_anchor_shape():
     assert set(value)=={'row_count','valid_clock_rows','anchor_counts','latest_4h_open','latest_4h_close_age_seconds'}
 
 
+def test_mixed_recent_anchor_rebuilds_4h_from_native_1h():
+    from backend.domain import parse, INTERVALS
+    latest=NOW.replace(hour=8,minute=0,second=0,microsecond=0)
+    current=[]
+    for i in range(7):
+        at=latest-timedelta(hours=4*(6-i))
+        current.append({'t':stamp(at),'o':2100+i,'h':2102+i,'l':2099+i,'c':2101+i})
+    old_last=parse(current[0]['t'])-timedelta(hours=3)
+    old=[]
+    for i in range(117):
+        at=old_last-timedelta(hours=4*(116-i))
+        old.append({'t':stamp(at),'o':1900+i,'h':1902+i,'l':1899+i,'c':1901+i})
+    raw_4h=old+current
+    with pytest.raises(ValueError,match='AMBIGUOUS_NATIVE_4H_ANCHOR'):
+        StrictXauAdapter._native_4h_bootstrap_window(raw_4h,NOW)
+    anchor=StrictXauAdapter._current_native_4h_anchor(raw_4h,NOW)
+    assert anchor==0
+    hourly=[]
+    end=NOW.replace(hour=13,minute=0,second=0,microsecond=0)
+    for i in range(300):
+        at=end-timedelta(hours=299-i)
+        hourly.append({'t':stamp(at),'o':2000+i,'h':2002+i,'l':1999+i,'c':2001+i})
+    rebuilt=StrictXauAdapter._aggregate_from_base(hourly,'4h',INTERVALS['1h'],anchor)
+    assert len(rebuilt)>=60
+    assert all(int(parse(row['t']).timestamp())%INTERVALS['4h']==0 for row in rebuilt)
+    assert parse(rebuilt[-1]['t'])+timedelta(hours=4)<=NOW
+
+
 def test_mixed_native_4h_anchor_selects_recent_verified_window():
     from backend.domain import parse
     last=NOW.replace(hour=8,minute=0,second=0,microsecond=0)
