@@ -69,6 +69,35 @@ class Runtime:
                 'reserve_bytes':self.reserve, 'within_budget':size < self.limit and free >= self.reserve,
                 'retention':'STOP_AT_BUDGET_NO_EVIDENCE_PRUNING', 'collection_enabled':self.collection_enabled}
 
+    def _render_startup_audit(self):
+        """Bounded integrity/replay gate so a large immutable DB cannot block web startup."""
+        with self.store.connect() as conn:
+            obj=conn.execute('SELECT rowid,id FROM forward_objects ORDER BY rowid DESC LIMIT 1').fetchone()
+            snap=conn.execute('SELECT rowid,id,payload FROM snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+            ledger=conn.execute('SELECT seq,event_key,kind,at,payload_id,previous,checksum FROM forward_ledger ORDER BY seq DESC LIMIT 1').fetchone()
+            decision=conn.execute('SELECT id FROM decisions ORDER BY candle_close DESC LIMIT 1').fetchone()
+            if obj:self.store.get(conn,obj['id'])
+            if snap and digest(json.loads(snap['payload']))!=snap['id']:
+                raise RuntimeError('REPLAY_INTEGRITY_FAILURE')
+            if ledger:
+                expected=digest([ledger['event_key'],ledger['kind'],ledger['at'],ledger['payload_id'],ledger['previous']])
+                if expected!=ledger['checksum']:
+                    raise RuntimeError('REPLAY_INTEGRITY_FAILURE')
+                self.store.get(conn,ledger['payload_id'])
+            self.store._audit_cursor=(obj['rowid'] if obj else 0,
+                                      snap['rowid'] if snap else 0,
+                                      ledger['seq'] if ledger else 0,
+                                      ledger['checksum'] if ledger else None)
+        checked=0
+        if decision:
+            identity=decision['id']
+            if not self.engine.replay(identity)['matches'] or not self.engine.replay_meta(identity)['matches']:
+                raise RuntimeError('REPLAY_INTEGRITY_FAILURE')
+            checked=1
+        self.replay={'checked_decisions':checked,
+                     'status':'PASSED' if checked else 'NO_DECISIONS_YET',
+                     'scope':'LATEST_TAIL_RENDER_STARTUP'}
+
     def __enter__(self):
         self.lock.__enter__()
         try:
@@ -81,7 +110,8 @@ class Runtime:
                         raise RuntimeError('DEDICATED_MOBILE_DATABASE_REQUIRED')
             self.specs = tuple(xau_spec(s) if s.channel=='xau' else s for s in candidates())
             self.store = RealStore(self.path, self.specs)
-            self.store.verify()
+            if not os.environ.get('RENDER'):
+                self.store.verify()
             # Preserve legacy identity and make the operational pause toggle independent
             # of model identity. Approved provider configuration requires a new epoch.
             configuration={'providers':[asdict(s) for s in self.specs], 'collection_enabled':False,'service':'mobile-v2'}
@@ -112,14 +142,20 @@ class Runtime:
                 ).fetchall()
                 if any(row[0] != 'CAPTURED' for row in pending):
                     raise RuntimeError('PENDING_RECOVERY_REQUIRES_OFFLINE_REVIEW')
-            # Read-only replay audit: do not alter decisions or invoke collection on restart.
-            with self.store.connect() as conn:
-                ids = [r[0] for r in conn.execute('SELECT id FROM decisions ORDER BY candle_close')]
-            for identity in ids:
-                if not self.engine.replay(identity)['matches'] or not self.engine.replay_meta(identity)['matches']:
-                    raise RuntimeError('REPLAY_INTEGRITY_FAILURE')
-            self.replay = {'checked_decisions':len(ids), 'status':'PASSED' if ids else 'NO_DECISIONS_YET'}
-            self.store.verify()
+            # Keep Render startup bounded: validate the latest immutable tail and
+            # latest replay before binding the web port. Full historical audit remains
+            # available offline/archive-side; future collector cycles verify only new
+            # objects from the established audit cursor.
+            if os.environ.get('RENDER'):
+                self._render_startup_audit()
+            else:
+                with self.store.connect() as conn:
+                    ids = [r[0] for r in conn.execute('SELECT id FROM decisions ORDER BY candle_close')]
+                for identity in ids:
+                    if not self.engine.replay(identity)['matches'] or not self.engine.replay_meta(identity)['matches']:
+                        raise RuntimeError('REPLAY_INTEGRITY_FAILURE')
+                self.replay = {'checked_decisions':len(ids), 'status':'PASSED' if ids else 'NO_DECISIONS_YET'}
+                self.store.verify()
             self.collector=MobileCollector(self)
             return self
         except BaseException:
