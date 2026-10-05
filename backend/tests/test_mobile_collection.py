@@ -358,6 +358,21 @@ def test_4h_requires_explicit_native_anchor():
         StrictXauAdapter._aggregate([],'4h')
 
 
+def test_native_4h_diagnostics_expose_only_anchor_shape():
+    from backend.domain import parse
+    rows=[
+        {'t':stamp(NOW.replace(hour=8,minute=0,second=0,microsecond=0))},
+        {'t':stamp(NOW.replace(hour=9,minute=0,second=0,microsecond=0))},
+        {'t':stamp(NOW.replace(hour=12,minute=0,second=0,microsecond=0))},
+    ]
+    value=StrictXauAdapter._native_4h_diagnostic(rows,NOW+timedelta(hours=5))
+    assert value['row_count']==3
+    assert value['valid_clock_rows']==3
+    assert value['anchor_counts']=={'0':2,'3600':1}
+    assert value['latest_4h_open']==stamp(parse(rows[-1]['t']))
+    assert set(value)=={'row_count','valid_clock_rows','anchor_counts','latest_4h_open','latest_4h_close_age_seconds'}
+
+
 def test_mixed_native_4h_anchor_selects_recent_verified_window():
     from backend.domain import parse
     last=NOW.replace(hour=8,minute=0,second=0,microsecond=0)
