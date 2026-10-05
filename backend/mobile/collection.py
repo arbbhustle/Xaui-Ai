@@ -99,12 +99,19 @@ class StrictXauAdapter(NativeAdapter):
         self._mobile_4h_diagnostics=None
 
     def request(self,path,params,now):
+        params=dict(params)
+        # Bootstrap needs enough authenticated 1h history to rebuild a current-
+        # anchor 4h frame when the vendor changes its native 4h bucket origin
+        # across a closed session. This remains one request for the 1h frame.
+        if not self._mobile_frames and params.get('interval')=='1h' and params.get('outputsize')==125:
+            params['outputsize']=400
         response=super().request(path,params,now)
         body=response.payload
         token=credential(self.spec,self.environ)
         if token in canonical(body):raise ValueError('UNSAFE_PROVIDER_RESPONSE')
         if forbidden_marker(body):raise ValueError('NONREAL_PROVIDER_RESPONSE')
-        if len(body.get('values',[]))>(1000 if params['interval']=='1min' else 125):
+        limit=1000 if params['interval']=='1min' else 400 if params['interval']=='1h' else 125
+        if len(body.get('values',[]))>limit:
             raise ValueError('CANDLE_COUNT_EXCEEDED')
         # Validate every supplied timestamp, including rows the base parser drops.
         # Explicit UTC is requested; offset-bearing timestamps must also be UTC.
@@ -194,6 +201,51 @@ class StrictXauAdapter(NativeAdapter):
         return selected,offset
 
     @staticmethod
+    def _current_native_4h_anchor(rows,now):
+        seconds=INTERVALS['4h'];valid=[]
+        for row in rows:
+            at=parse(row['t']);epoch=int(at.timestamp())
+            if at.utcoffset()!=timedelta(0) or at.microsecond or epoch%60:
+                raise ValueError('INVALID_NATIVE_4H_ANCHOR')
+            if at+timedelta(seconds=seconds)>now:
+                raise ValueError('UNCLOSED_NATIVE_4H_ANCHOR')
+            valid.append((at,epoch%seconds))
+        valid.sort()
+        if len(valid)<2:raise ValueError('AMBIGUOUS_NATIVE_4H_ANCHOR')
+        anchor=valid[-1][1];tail=[valid[-1]]
+        for item in reversed(valid[:-1]):
+            if item[1]!=anchor:break
+            newer=tail[-1][0]
+            expected=item[0]+timedelta(seconds=seconds)
+            if newer!=expected and not (newer>expected and allowed_session_gap(expected,newer,seconds)):
+                break
+            tail.append(item)
+        if len(tail)<2:raise ValueError('AMBIGUOUS_NATIVE_4H_ANCHOR')
+        return anchor
+
+    @staticmethod
+    def _aggregate_from_base(rows,interval,base_seconds,anchor_seconds=0):
+        seconds=INTERVALS[interval]
+        if seconds%base_seconds:raise ValueError('INVALID_AGGREGATION_BASE')
+        width=seconds//base_seconds;buckets={}
+        for row in rows:
+            at=parse(row['t']);epoch=int(at.timestamp())
+            if at.utcoffset()!=timedelta(0) or at.microsecond or epoch%base_seconds:
+                continue
+            opened=epoch-((epoch-anchor_seconds)%seconds)
+            buckets.setdefault(opened,[]).append(row)
+        result=[]
+        for opened,group in sorted(buckets.items()):
+            group=sorted(group,key=lambda row:row['t'])
+            if len(group)!=width:continue
+            start=datetime.fromtimestamp(opened,timezone.utc)
+            if any(parse(row['t'])!=start+timedelta(seconds=base_seconds*i) for i,row in enumerate(group)):
+                continue
+            result.append({'t':stamp(start),'o':group[0]['o'],'h':max(row['h'] for row in group),
+                           'l':min(row['l'] for row in group),'c':group[-1]['c']})
+        return result
+
+    @staticmethod
     def _aggregate(minutes,interval,anchor_seconds=None):
         seconds=INTERVALS[interval];width=seconds//60;buckets={}
         if interval=='4h':
@@ -221,7 +273,19 @@ class StrictXauAdapter(NativeAdapter):
             first=super()._xau(now)
             raw_4h=first.envelope['value']['4h']
             self._mobile_4h_diagnostics=self._native_4h_diagnostic(raw_4h,now)
-            native_4h,anchor=self._native_4h_bootstrap_window(raw_4h,now)
+            source='NATIVE_4H_BOOTSTRAP_FILTERED'
+            try:
+                native_4h,anchor=self._native_4h_bootstrap_window(raw_4h,now)
+            except ValueError as exc:
+                if safe_xau_validation_code(exc)!='AMBIGUOUS_NATIVE_4H_ANCHOR':raise
+                anchor=self._current_native_4h_anchor(raw_4h,now)
+                native_4h=self._aggregate_from_base(first.envelope['value']['1h'],'4h',INTERVALS['1h'],anchor)[-125:]
+                if len(native_4h)<60:
+                    raise ValueError('BOOTSTRAP_COVERAGE_REQUIRED')
+                latest_close=parse(native_4h[-1]['t'])+timedelta(hours=4)
+                if not 0<=(now-latest_close).total_seconds()<INTERVALS['4h']+90:
+                    raise ValueError('INVALID_BOOTSTRAP_CANDLES')
+                source='NATIVE_1H_REBUCKETED_TO_CURRENT_NATIVE_4H_ANCHOR'
             value={tf:list(first.envelope['value'][tf]) for tf in INTERVALS}
             value['4h']=native_4h
             envelope=dict(first.envelope,value=value,revision_id=digest(value))
@@ -232,8 +296,9 @@ class StrictXauAdapter(NativeAdapter):
                     'provider_identity':self.spec.identity,'bootstrap_at':stamp(now),
                     'native_bars':deepcopy(native_4h),'raw_hash':first.raw_hash}
             details=dict(first.details,mobile_request_mode='BASIC_BOOTSTRAP_5_REQUESTS',
-                         derived_intervals=[],aggregation_anchors_seconds={'4h':anchor},
-                         aggregation_anchor_source='NATIVE_4H_BOOTSTRAP_FILTERED')
+                         derived_intervals=['4h'] if source.startswith('NATIVE_1H_') else [],
+                         aggregation_anchors_seconds={'4h':anchor},
+                         aggregation_anchor_source=source)
             if self._mobile_anchor_evidence:details[META]=self._mobile_anchor_evidence
             return Acquisition(envelope,first.raw_hash,first.verification,details)
 
