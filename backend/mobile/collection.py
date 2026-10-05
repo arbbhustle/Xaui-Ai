@@ -96,6 +96,7 @@ class StrictXauAdapter(NativeAdapter):
         self._mobile_frames={}
         self._mobile_4h_anchor=None
         self._mobile_anchor_evidence=None
+        self._mobile_4h_diagnostics=None
 
     def request(self,path,params,now):
         response=super().request(path,params,now)
@@ -119,6 +120,25 @@ class StrictXauAdapter(NativeAdapter):
         for row in incoming:
             if replace_existing or row['t'] not in rows:rows[row['t']]=row
         return sorted(rows.values(),key=lambda row:row['t'])[-limit:]
+
+    @staticmethod
+    def _native_4h_diagnostic(rows,now):
+        seconds=INTERVALS['4h'];counts={};latest=None;valid=0
+        for row in rows:
+            try:
+                at=parse(row['t']);epoch=int(at.timestamp())
+                if at.utcoffset()!=timedelta(0) or at.microsecond or epoch%60:
+                    continue
+                valid+=1;offset=epoch%seconds
+                counts[str(offset)]=counts.get(str(offset),0)+1
+                if latest is None or at>latest:latest=at
+            except Exception:
+                continue
+        return {'row_count':len(rows),'valid_clock_rows':valid,
+                'anchor_counts':dict(sorted(counts.items(),key=lambda kv:int(kv[0]))),
+                'latest_4h_open':stamp(latest) if latest else None,
+                'latest_4h_close_age_seconds':((now-(latest+timedelta(seconds=seconds))).total_seconds()
+                                              if latest is not None else None)}
 
     @staticmethod
     def _native_4h_anchor(rows,now):
@@ -199,7 +219,9 @@ class StrictXauAdapter(NativeAdapter):
         # Subsequent cycles use one 1min request and derive newly closed higher bars.
         if not self._mobile_frames:
             first=super()._xau(now)
-            native_4h,anchor=self._native_4h_bootstrap_window(first.envelope['value']['4h'],now)
+            raw_4h=first.envelope['value']['4h']
+            self._mobile_4h_diagnostics=self._native_4h_diagnostic(raw_4h,now)
+            native_4h,anchor=self._native_4h_bootstrap_window(raw_4h,now)
             value={tf:list(first.envelope['value'][tf]) for tf in INTERVALS}
             value['4h']=native_4h
             envelope=dict(first.envelope,value=value,revision_id=digest(value))
@@ -406,6 +428,7 @@ class MobileCollector(ForwardRunner):
                 'last_attempt_at':request['at'] if request else None,
                 'last_attempt_age_seconds':attempt_age,
                 'last_validation_failure':getattr(self.collector,'last_validation_failure',None),
+                'native_4h_diagnostics':getattr(self.collector.providers.get(spec.name),'_mobile_4h_diagnostics',None),
                 'validator_version':self.runtime.validator_version,
                 'scheduler_status':scheduler_status,
                 'collector_thread_alive':thread_alive,
