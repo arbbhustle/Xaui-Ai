@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from backend.domain import digest, stamp
 from backend.mobile.runtime import Runtime
 from backend.mobile.api import create_app, system
-from backend.mobile.collection import StrictXauAdapter
+from backend.mobile.collection import StrictXauAdapter, ReceiptValidatedCollector
 from backend.realdata.transport import NativeHTTP, Response
 from backend.forward.providers import ProviderFailure
 from test_phase1 import NOW
@@ -371,6 +371,28 @@ def test_native_4h_diagnostics_expose_only_anchor_shape():
     assert value['anchor_counts']=={'0':2,'3600':1}
     assert value['latest_4h_open']==stamp(parse(rows[-1]['t']))
     assert set(value)=={'row_count','valid_clock_rows','anchor_counts','latest_4h_open','latest_4h_close_age_seconds'}
+
+
+def test_anchor_change_requires_evidenced_alignment_epoch():
+    source='NATIVE_1H_REBUCKETED_TO_CURRENT_NATIVE_4H_ANCHOR'
+    rows=[]
+    start=NOW-timedelta(hours=4*60)
+    for i in range(60):
+        at=start+timedelta(hours=4*i)
+        rows.append({'t':stamp(at),'o':2000+i,'h':2002+i,'l':1999+i,'c':2001+i})
+    old={'version':'mobile-twelve-xau-4h-v1','anchor_seconds':3600}
+    new={'version':'mobile-twelve-xau-4h-v1','anchor_seconds':0,
+         'provider_identity':'provider-id','bootstrap_at':stamp(NOW),
+         'native_bars':rows,'raw_hash':'a'*64,'epoch_source':source}
+    new['epoch_id']=digest([new['version'],new['provider_identity'],0,source,
+                            rows[0]['t'],rows[-1]['t'],new['raw_hash']])
+    details={'aggregation_anchor_source':source}
+    diagnostics={'anchor_counts':{'0':10,'3600':114}}
+    assert ReceiptValidatedCollector._valid_anchor_epoch_transition(old,new,details,diagnostics)
+    assert not ReceiptValidatedCollector._valid_anchor_epoch_transition(
+        old,dict(new,epoch_id='bad'),details,diagnostics)
+    assert not ReceiptValidatedCollector._valid_anchor_epoch_transition(
+        old,new,details,{'anchor_counts':{'0':1,'3600':123}})
 
 
 def test_mixed_recent_anchor_rebuilds_4h_from_native_1h():
