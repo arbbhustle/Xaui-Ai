@@ -292,9 +292,12 @@ class StrictXauAdapter(NativeAdapter):
             self._mobile_frames={tf:list(value[tf]) for tf in INTERVALS}
             self._mobile_4h_anchor=anchor
             if self.alignment_version==ALIGNMENT_V1:
+                epoch_id=digest([ALIGNMENT_V1,self.spec.identity,anchor,source,
+                                 native_4h[0]['t'],native_4h[-1]['t'],first.raw_hash])
                 self._mobile_anchor_evidence={'version':ALIGNMENT_V1,'anchor_seconds':anchor,
                     'provider_identity':self.spec.identity,'bootstrap_at':stamp(now),
-                    'native_bars':deepcopy(native_4h),'raw_hash':first.raw_hash}
+                    'native_bars':deepcopy(native_4h),'raw_hash':first.raw_hash,
+                    'epoch_id':epoch_id,'epoch_source':source}
             details=dict(first.details,mobile_request_mode='BASIC_BOOTSTRAP_5_REQUESTS',
                          derived_intervals=['4h'] if source.startswith('NATIVE_1H_') else [],
                          aggregation_anchors_seconds={'4h':anchor},
@@ -361,6 +364,24 @@ class StrictXauAdapter(NativeAdapter):
 
 
 class ReceiptValidatedCollector(RealCollector):
+    @staticmethod
+    def _valid_anchor_epoch_transition(old,new,details,diagnostics):
+        try:
+            if not isinstance(old,dict) or not isinstance(new,dict):return False
+            if old.get('anchor_seconds')==new.get('anchor_seconds'):return True
+            source='NATIVE_1H_REBUCKETED_TO_CURRENT_NATIVE_4H_ANCHOR'
+            if new.get('epoch_source')!=source or details.get('aggregation_anchor_source')!=source:return False
+            rows=new.get('native_bars')
+            if not isinstance(rows,list) or len(rows)<60:return False
+            expected=digest([new.get('version'),new.get('provider_identity'),new.get('anchor_seconds'),source,
+                             rows[0]['t'],rows[-1]['t'],new.get('raw_hash')])
+            if new.get('epoch_id')!=expected:return False
+            counts=(diagnostics or {}).get('anchor_counts',{})
+            if counts.get(str(new.get('anchor_seconds')),0)<2:return False
+            return True
+        except (KeyError,TypeError,ValueError,IndexError):
+            return False
+
     def _scoped_read(self,spec,started,inner):
         adapter=self.providers[spec.name]
         self.last_validation_failure=None
@@ -374,7 +395,9 @@ class ReceiptValidatedCollector(RealCollector):
                 prior=conn.execute('SELECT payload_id FROM forward_receipts WHERE provider=? ORDER BY received_at DESC LIMIT 1',(spec.identity,)).fetchone()
                 if prior:
                     old=self.store.get_observation_document(conn,prior[0])['native']['details'].get(META)
-                    if not old or old['anchor_seconds']!=acquisition.details[META]['anchor_seconds']:
+                    new=acquisition.details.get(META)
+                    if not self._valid_anchor_epoch_transition(
+                            old,new,acquisition.details,getattr(adapter,'_mobile_4h_diagnostics',None)):
                         raise ValueError('ANCHOR_CHANGE_REQUIRES_NEW_EPOCH')
             inner.append((row,None,0))
         except ProviderFailure as exc:
