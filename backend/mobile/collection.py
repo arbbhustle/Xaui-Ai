@@ -266,6 +266,16 @@ class StrictXauAdapter(NativeAdapter):
                            'l':min(row['l'] for row in rows),'c':rows[-1]['c']})
         return result
 
+    def _needs_rebootstrap_for_open_gap(self,incoming):
+        existing=self._mobile_frames.get('1min') or []
+        if not existing or not incoming:return False
+        expected=parse(existing[-1]['t'])+timedelta(minutes=1)
+        first=parse(incoming[0]['t'])
+        if first<=expected:return False
+        # Gaps wholly inside a scheduled closure are safe; an uncovered open-
+        # session segment means the bounded 1000-row poll cannot bridge history.
+        return not allowed_session_gap(expected,first,INTERVALS['1min'])
+
     def _mobile_xau(self,now):
         # One-time process bootstrap retains the original direct provider coverage.
         # Subsequent cycles use one 1min request and derive newly closed higher bars.
@@ -321,6 +331,15 @@ class StrictXauAdapter(NativeAdapter):
         minutes.sort(key=lambda row:row['t'])
         if not minutes:raise ProviderFailure('NO_CLOSED_CANDLES')
         if len({row['t'] for row in minutes})!=len(minutes):raise ValueError('DUPLICATE_CANDLE')
+        if self._needs_rebootstrap_for_open_gap(minutes):
+            # Do not stitch a bounded recent poll across an uncovered live-market
+            # gap (common after weekend/sleep). Restart from provider-verified
+            # multi-timeframe history rather than weakening continuity checks.
+            self._mobile_frames={}
+            self._mobile_4h_anchor=None
+            self._mobile_anchor_evidence=None
+            self._mobile_4h_diagnostics=None
+            return self._mobile_xau(now)
 
         self._mobile_frames['1min']=self._merge(self._mobile_frames['1min'],minutes,1000,True)
         for interval in ('5min','15min','1h','4h'):
