@@ -373,6 +373,20 @@ def test_native_4h_diagnostics_expose_only_anchor_shape():
     assert set(value)=={'row_count','valid_clock_rows','anchor_counts','latest_4h_open','latest_4h_close_age_seconds'}
 
 
+def test_uncovered_weekend_live_gap_requires_rebootstrap():
+    # Last accepted minute before the Friday close, followed by a bounded poll
+    # that starts well after the Sunday reopen, must not be stitched together.
+    adapter=object.__new__(StrictXauAdapter)
+    adapter._mobile_frames={'1min':[{'t':'2026-10-09T20:56:00+00:00','o':1,'h':1,'l':1,'c':1}]}
+    incoming=[{'t':'2026-10-11T23:30:00+00:00','o':1,'h':1,'l':1,'c':1}]
+    assert adapter._needs_rebootstrap_for_open_gap(incoming)
+
+    # Normal overlapping/continuous polling must stay on the one-request path.
+    adapter._mobile_frames={'1min':[{'t':'2026-10-12T15:58:00+00:00','o':1,'h':1,'l':1,'c':1}]}
+    incoming=[{'t':'2026-10-12T15:59:00+00:00','o':1,'h':1,'l':1,'c':1}]
+    assert not adapter._needs_rebootstrap_for_open_gap(incoming)
+
+
 def test_anchor_change_requires_evidenced_alignment_epoch():
     source='NATIVE_1H_REBUCKETED_TO_CURRENT_NATIVE_4H_ANCHOR'
     rows=[]
