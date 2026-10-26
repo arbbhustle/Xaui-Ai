@@ -20,7 +20,7 @@ from test_phase3f import spec
 from test_phase3f_forensic import offline_cycle
 
 
-ENDPOINTS=('/health','/signal','/research-signal','/performance','/history','/trades','/system-status')
+ENDPOINTS=('/health','/signal','/research-signal','/performance','/history','/trades','/system-status','/storage-diagnostics')
 
 
 def seed(runtime, at=NOW):
@@ -137,8 +137,18 @@ def test_storage_budget_and_database_failures_fail_closed(tmp_path):
     with TestClient(app,raise_server_exceptions=False) as client:
         runtime=app.state.runtime
         runtime.limit=1
+        health=client.get('/health')
+        assert health.status_code==200
+        assert health.json()['soft_budget_exceeded'] is True
+        assert health.json()['write_allowed'] is True
+        assert 'STORAGE_PHYSICAL_RESERVE_EXHAUSTED' not in client.get('/system-status').json()['reasons']
+
+        original=runtime.storage
+        runtime.storage=lambda:dict(original(),write_allowed=False)
         assert client.get('/health').status_code==503
-        assert 'STORAGE_BUDGET_EXCEEDED' in client.get('/system-status').json()['reasons']
+        assert 'STORAGE_PHYSICAL_RESERVE_EXHAUSTED' in client.get('/system-status').json()['reasons']
+        runtime.storage=original
+
         runtime.limit=512*1024*1024
         with runtime.store.connect() as conn:conn.execute('DROP TABLE forward_ledger')
         # Liveness and signal reads intentionally avoid a full integrity audit on
@@ -253,3 +263,16 @@ def test_mobile_xau_freshness_window():
 
     closes['1min'] = stamp(NOW - timedelta(seconds=241))
     assert 'STALE_DATA:1min' in mobile_freshness_errors(closes, NOW)
+
+def test_storage_diagnostics_are_read_only_and_bounded(tmp_path):
+    app=create_app(tmp_path/'m.sqlite3',clock=lambda:NOW)
+    with TestClient(app) as client:
+        runtime=app.state.runtime
+        with runtime.read() as conn:before=list(conn.iterdump())
+        value=client.get('/storage-diagnostics').json()
+        assert value['diagnostic_source'] in ('SQLITE_DBSTAT','SQLITE_PAGE_TOTAL_ONLY')
+        assert value['allocated_bytes']>=0
+        assert value['page_size_bytes']>0
+        assert len(value['table_sizes'])<=40
+        with runtime.read() as conn:assert list(conn.iterdump())==before
+
