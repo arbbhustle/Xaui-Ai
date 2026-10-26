@@ -12,7 +12,7 @@ services:
     disk:
       name: dardania-mobile-v2-data
       mountPath: /var/data
-      sizeGB: 2
+      sizeGB: 4
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
@@ -23,6 +23,6 @@ services:
       - key: MOBILE_COLLECTION_ENABLED
         value: "false"
       - key: MOBILE_MAX_DB_MIB
-        value: "512"
+        value: "3072"
       - key: MOBILE_MIN_FREE_MIB
         value: "256"
