@@ -64,10 +64,40 @@ class Runtime:
 
     def storage(self):
         size = sum(p.stat().st_size for p in (self.path, Path(str(self.path)+'-wal'), Path(str(self.path)+'-shm')) if p.exists())
-        free = shutil.disk_usage(self.path.parent).free
+        usage = shutil.disk_usage(self.path.parent)
+        free = usage.free
+        cycle_headroom = 16 * MIB
+        soft_budget_exceeded = size >= self.limit
+        write_allowed = free >= self.reserve + cycle_headroom
         return {'allocated_bytes':size, 'budget_bytes':self.limit, 'free_bytes':free,
-                'reserve_bytes':self.reserve, 'within_budget':size < self.limit and free >= self.reserve,
-                'retention':'STOP_AT_BUDGET_NO_EVIDENCE_PRUNING', 'collection_enabled':self.collection_enabled}
+                'disk_total_bytes':usage.total, 'reserve_bytes':self.reserve,
+                'cycle_headroom_bytes':cycle_headroom,
+                'within_budget':not soft_budget_exceeded and free >= self.reserve,
+                'soft_budget_exceeded':soft_budget_exceeded,
+                'write_allowed':write_allowed,
+                'retention':'IMMUTABLE_EVIDENCE_SOFT_BUDGET_PHYSICAL_RESERVE_HARD_STOP',
+                'collection_enabled':self.collection_enabled}
+
+    def storage_diagnostics(self):
+        """Read-only page allocation summary; never exposes payload contents."""
+        state=self.storage()
+        tables=[]
+        with self.store.connect() as conn:
+            page_size=conn.execute('PRAGMA page_size').fetchone()[0]
+            page_count=conn.execute('PRAGMA page_count').fetchone()[0]
+            freelist=conn.execute('PRAGMA freelist_count').fetchone()[0]
+            try:
+                rows=conn.execute(
+                    "SELECT name, SUM(pgsize) AS bytes, COUNT(*) AS pages "
+                    "FROM dbstat GROUP BY name ORDER BY bytes DESC LIMIT 40"
+                ).fetchall()
+                tables=[{'name':row['name'],'bytes':row['bytes'],'pages':row['pages']} for row in rows]
+                source='SQLITE_DBSTAT'
+            except sqlite3.DatabaseError:
+                source='SQLITE_PAGE_TOTAL_ONLY'
+        return dict(state,page_size_bytes=page_size,page_count=page_count,
+                    freelist_pages=freelist,allocated_table_bytes=sum(t['bytes'] for t in tables),
+                    table_sizes=tables,diagnostic_source=source)
 
     def _render_startup_audit(self):
         """Bounded integrity/replay gate so a large immutable DB cannot block web startup."""
@@ -101,8 +131,8 @@ class Runtime:
     def __enter__(self):
         self.lock.__enter__()
         try:
-            if not self.storage()['within_budget']:
-                raise RuntimeError('STORAGE_BUDGET_EXCEEDED')
+            if not self.storage()['write_allowed']:
+                raise RuntimeError('STORAGE_PHYSICAL_RESERVE_EXHAUSTED')
             existed = self.path.exists()
             if existed:
                 with closing(sqlite3.connect(self.path.as_uri()+'?mode=ro', uri=True)) as conn:
