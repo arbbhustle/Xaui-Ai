@@ -5,6 +5,8 @@ The normal /signal champion remains unchanged.
 """
 
 from copy import deepcopy
+from collections import Counter
+from datetime import timedelta
 import json
 
 from ..domain import Policy, digest, freshness_errors, parse, stamp
@@ -130,6 +132,62 @@ def latest_xau_candidate(runtime, now):
     }
 
     return value
+
+
+
+def research_diagnostics(runtime, now, days=14, max_rows=12000):
+    """Bounded read-only ledger summary for signal silence diagnosis."""
+    days=max(1,min(int(days),31))
+    start=now-timedelta(days=days)
+    rows=[]
+    with runtime.read() as conn:
+        rows=conn.execute(
+            """
+            SELECT seq,at,payload_id
+            FROM forward_ledger
+            WHERE kind='DECISION' AND at>=? AND at<=?
+            ORDER BY seq DESC
+            LIMIT ?
+            """,
+            (stamp(start),stamp(now),max_rows),
+        ).fetchall()
+        candidate=Counter();final=Counter();vetoes=Counter();daily={}
+        first_at=None;last_at=None
+        for row in reversed(rows):
+            event=runtime.store.get(conn,row["payload_id"])
+            champion=event.get("champion") or {}
+            at=parse(row["at"])
+            if first_at is None:first_at=at
+            last_at=at
+            cand=champion.get("candidate_direction","NO_TRADE")
+            candidate[cand if cand in ("BUY","SELL") else "NO_TRADE"]+=1
+            projected=compose_research_signal(champion,at)
+            direction=projected.get("direction","NO_TRADE")
+            final[direction if direction in ("BUY","SELL") else "NO_TRADE"]+=1
+            for code in projected.get("veto_codes",[]):
+                vetoes[str(code)]+=1
+            day=at.date().isoformat()
+            bucket=daily.setdefault(day,{"evaluations":0,"candidate_buy":0,"candidate_sell":0,
+                                         "research_buy":0,"research_sell":0,"no_trade":0})
+            bucket["evaluations"]+=1
+            if cand=="BUY":bucket["candidate_buy"]+=1
+            elif cand=="SELL":bucket["candidate_sell"]+=1
+            if direction=="BUY":bucket["research_buy"]+=1
+            elif direction=="SELL":bucket["research_sell"]+=1
+            else:bucket["no_trade"]+=1
+    return {
+        "window_days":days,
+        "requested_since":stamp(start),
+        "evaluations":len(rows),
+        "truncated":len(rows)>=max_rows,
+        "first_evaluation_at":stamp(first_at) if first_at else None,
+        "last_evaluation_at":stamp(last_at) if last_at else None,
+        "candidate_counts":dict(candidate),
+        "research_signal_counts":dict(final),
+        "top_vetoes":[{"code":code,"count":count} for code,count in vetoes.most_common(15)],
+        "daily":daily,
+        "read_only":True,
+    }
 
 
 def research_history(runtime, now, limit=30):
