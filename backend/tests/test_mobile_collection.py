@@ -156,11 +156,21 @@ def test_render_startup_disabled_and_gets_do_not_collect(tmp_path,monkeypatch):
         assert client.get('/signal').json()['direction']=='NO_TRADE'
 
 
-def test_budget_prevents_requests(tmp_path,monkeypatch):
+def test_soft_budget_does_not_stop_collection_but_physical_reserve_does(tmp_path,monkeypatch):
     approve(monkeypatch)
     with Runtime(tmp_path/'m.db') as runtime:
         calls=wire(runtime,monkeypatch,[NOW]);runtime.limit=1
-        assert runtime.collector._once()['status']=='STORAGE_BUDGET_EXCEEDED'
+        state=runtime.storage()
+        assert state['soft_budget_exceeded'] is True
+        assert state['write_allowed'] is True
+        assert runtime.collector._once().get('status')!='STORAGE_PHYSICAL_RESERVE_EXHAUSTED'
+        assert calls
+
+    with Runtime(tmp_path/'m2.db') as runtime:
+        calls=wire(runtime,monkeypatch,[NOW])
+        original=runtime.storage
+        runtime.storage=lambda:dict(original(),write_allowed=False)
+        assert runtime.collector._once()['status']=='STORAGE_PHYSICAL_RESERVE_EXHAUSTED'
         assert calls==[]
 
 
