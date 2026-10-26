@@ -464,12 +464,12 @@ class MobileCollector(ForwardRunner):
         if not self.runtime.collection_enabled:return {'status':'COLLECTION_DISABLED'}
         # Reserve additional headroom for a bounded cycle; never prune evidence.
         state=self.runtime.storage()
-        if not state['within_budget'] or state['allocated_bytes']+16*1024*1024>=state['budget_bytes']:
-            self.failure='STORAGE_BUDGET_EXCEEDED'
+        if not state['write_allowed']:
+            self.failure='STORAGE_PHYSICAL_RESERVE_EXHAUSTED'
             return {'status':self.failure}
         try:
             result=super()._once()
-            if not self.runtime.storage()['within_budget']:raise RuntimeError('STORAGE_BUDGET_EXCEEDED')
+            if not self.runtime.storage()['write_allowed']:raise RuntimeError('STORAGE_PHYSICAL_RESERVE_EXHAUSTED')
             self.failure=None
             return result
         except Exception:
@@ -523,7 +523,7 @@ class MobileCollector(ForwardRunner):
         valid=bool(value and 0<=age<MOBILE_XAU_FRESHNESS_SECONDS and parse(value['received_at'])<=now and value.get('native',{}).get('live_verified')
                    and spec.approved_at(now) and request and request['status']=='COMPLETE' and not self.failure
                    and self.runtime.collection_enabled and bool(os.environ.get('TWELVE_DATA_API_KEY','').strip())
-                   and self.runtime.storage()['within_budget'])
+                   and self.runtime.storage()['write_allowed'])
         return {'approval':'APPROVED_CONFIGURATION' if spec.approved_at(now) else 'UNAPPROVED',
                 'credential_configured':bool(os.environ.get('TWELVE_DATA_API_KEY','').strip()),
                 'last_observed_at':value['observed_at'] if value else None,
