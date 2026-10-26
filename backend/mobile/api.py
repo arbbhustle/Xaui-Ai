@@ -34,7 +34,7 @@ SECRET = re.compile(r'token|secret|password|api.?key|authorization|credential', 
 # Exact allowlists only: exception messages and custom class names are untrusted.
 STARTUP_CODES = frozenset('DEDICATED_PERSISTENT_DISK_REQUIRED LEGACY_SERVICE_FORBIDDEN '
     'LEGACY_DATABASE_FORBIDDEN UNKNOWN_MOBILE_VALIDATOR INVALID_STORAGE_BUDGET '
-    'STORAGE_BUDGET_EXCEEDED DEDICATED_MOBILE_DATABASE_REQUIRED '
+    'STORAGE_BUDGET_EXCEEDED STORAGE_PHYSICAL_RESERVE_EXHAUSTED DEDICATED_MOBILE_DATABASE_REQUIRED '
     'ORIGINAL_ENGINE_CONFIGURATION_REQUIRED PENDING_RECOVERY_REQUIRES_OFFLINE_REVIEW '
     'REPLAY_INTEGRITY_FAILURE INVALID_COLLECTION_FLAG INVALID_RESEARCH_US2Y_FLAG '
     'RESEARCH_DB_MUST_USE_PERSISTENT_DISK INCOMPATIBLE_RESEARCH_DATABASE'.split())
@@ -155,7 +155,7 @@ def system(runtime, now):
     storage=runtime.storage()
     xau=runtime.collector.status(now)
     state={'status':'NOT_READY', 'mode':'DEMO_ONLY', 'collection_enabled':runtime.collection_enabled,
-            'reasons':(['COLLECTION_DISABLED'] if not runtime.collection_enabled else [])+['REQUIRED_PROVIDERS_NOT_READY']+([] if storage['within_budget'] else ['STORAGE_BUDGET_EXCEEDED']),
+            'reasons':(['COLLECTION_DISABLED'] if not runtime.collection_enabled else [])+['REQUIRED_PROVIDERS_NOT_READY']+([] if storage['write_allowed'] else ['STORAGE_PHYSICAL_RESERVE_EXHAUSTED']),
             'champion':'PHASE3B_CHAMPION', 'challenger':'ISOLATED_DEMO_ONLY_NO_AUTO_PROMOTION',
             'promotion':'PROMOTION_INELIGIBLE', 'automatic_promotion':False,
             'research_status':'INSUFFICIENT_FORWARD_DATA', 'predictive_edge_established':False,
@@ -241,15 +241,22 @@ def create_app(
         # provider details remain available from /system-status.
         r = app.state.runtime
         storage = r.storage()
-        healthy = storage['within_budget']
+        healthy = storage['write_allowed']
         return JSONResponse({'status':'OK' if healthy else 'DEGRADED',
                              'mode':'DEMO_ONLY','readiness':'NOT_READY',
                              'collection_enabled':r.collection_enabled,
-                             'storage_healthy':healthy,'within_storage_budget':healthy},
+                             'storage_healthy':healthy,
+                             'within_storage_budget':storage['within_budget'],
+                             'soft_budget_exceeded':storage['soft_budget_exceeded'],
+                             'write_allowed':storage['write_allowed']},
                             status_code=200 if healthy else 503)
 
     @app.get('/system-status')
     def status():return public(system(runtime(),clock()))
+
+    @app.get('/storage-diagnostics')
+    def storage_diagnostics():
+        return public(runtime().storage_diagnostics())
 
     @app.get('/signal')
     def signal():
