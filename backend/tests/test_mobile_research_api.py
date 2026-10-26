@@ -223,8 +223,27 @@ def test_research_history_archives_early_reversal_setup():
     assert history["items"][0]["early_reversal"] is True
 
 
+class DiagnosticConnection:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, sql, params):
+        start, end, limit = params
+        eligible = [
+            row for row in self.rows
+            if start <= row["at"] <= end
+        ]
+        eligible.sort(key=lambda row: row["seq"], reverse=True)
+        return HistoryRows(eligible[:limit])
+
+
+class DiagnosticRuntime(HistoryRuntime):
+    def read(self):
+        return self._Read(DiagnosticConnection(self.rows))
+
+
 def test_research_diagnostics_counts_candidates_and_final_setups():
-    result = research_diagnostics(HistoryRuntime(), NOW, days=14)
+    result = research_diagnostics(DiagnosticRuntime(), NOW, days=14)
 
     assert result["evaluations"] == 601
     assert result["candidate_counts"]["SELL"] == 1
