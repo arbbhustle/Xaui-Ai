@@ -5,6 +5,7 @@ from backend.mobile.research_api import (
     research_view,
     research_xau_freshness_errors,
     research_history,
+    research_diagnostics,
 )
 from test_phase1 import NOW
 
@@ -220,3 +221,16 @@ def test_research_history_archives_early_reversal_setup():
     assert history["items"][0]["direction"] == "SELL"
     assert history["items"][0]["entry"] == 4288.15
     assert history["items"][0]["early_reversal"] is True
+
+
+def test_research_diagnostics_counts_candidates_and_final_setups():
+    result = research_diagnostics(HistoryRuntime(), NOW, days=14)
+
+    assert result["evaluations"] == 601
+    assert result["candidate_counts"]["SELL"] == 1
+    assert result["research_signal_counts"]["SELL"] == 1
+    assert result["research_signal_counts"]["NO_TRADE"] == 600
+    assert result["read_only"] is True
+    assert result["top_vetoes"]
+    assert result["daily"]
+
