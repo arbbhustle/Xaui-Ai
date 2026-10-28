@@ -4,31 +4,17 @@ Historical/delayed data only. This module is deliberately on-demand and read-onl
 it never changes Champion/Research scoring, vetoes, entries, or execution state.
 """
 from datetime import timedelta
-import json
 import os
 
-import httpx
+import databento as db
 
 DATASET = "GLBX.MDP3"
 SYMBOL = "GC.v.0"
 ROLE = "SHADOW_ONLY_NO_SIGNAL_INFLUENCE"
-URL = "https://hist.databento.com/v0/timeseries.get_range"
 
 
 def _configured():
     return bool(os.environ.get("DATABENTO_API_KEY", "").strip())
-
-
-def _records(text):
-    rows = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        value = json.loads(line)
-        if isinstance(value, dict):
-            rows.append(value)
-    return rows
 
 
 def _number(value):
@@ -42,32 +28,22 @@ def _fetch(schema, start, end, limit, client=None):
     key = os.environ.get("DATABENTO_API_KEY", "").strip()
     if not key:
         raise RuntimeError("DATABENTO_NOT_CONFIGURED")
-    owned = client is None
-    client = client or httpx.Client(timeout=20.0)
-    try:
-        response = client.get(
-            URL,
-            auth=(key, ""),
-            params={
-                "dataset": DATASET,
-                "schema": schema,
-                "symbols": SYMBOL,
-                "stype_in": "continuous",
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "encoding": "json",
-                "compression": "none",
-                "pretty_px": "true",
-                "pretty_ts": "true",
-                "map_symbols": "true",
-                "limit": int(limit),
-            },
-        )
-        response.raise_for_status()
-        return _records(response.text)
-    finally:
-        if owned:
-            client.close()
+    historical = client or db.Historical(key)
+    store = historical.timeseries.get_range(
+        dataset=DATASET,
+        schema=schema,
+        symbols=SYMBOL,
+        stype_in="continuous",
+        start=start,
+        end=end,
+        limit=int(limit),
+    )
+    # Databento timeseries.get_range returns a DBNStore. Convert only this
+    # bounded sample after download; raw provider payloads are never persisted.
+    frame = store.to_df()
+    if frame is None or frame.empty:
+        return []
+    return frame.reset_index().to_dict(orient="records")
 
 
 def analyze(trades, books):
@@ -141,6 +117,21 @@ def analyze(trades, books):
     }
 
 
+def _provider_error(exc):
+    # Never expose provider exception bodies: they may contain request/account
+    # details. Return only a coarse diagnostic category.
+    value = (type(exc).__name__ + " " + str(exc)).upper()
+    if any(marker in value for marker in ("401", "403", "AUTH", "PERMISSION", "UNAUTHORIZED", "FORBIDDEN")):
+        return "AUTH_OR_PERMISSION"
+    if any(marker in value for marker in ("402", "PAYMENT", "ENTITLE", "CREDIT", "BILLING")):
+        return "PAYMENT_OR_ENTITLEMENT"
+    if any(marker in value for marker in ("TIMEOUT", "CONNECT", "NETWORK", "DNS")):
+        return "NETWORK_OR_TIMEOUT"
+    if any(marker in value for marker in ("400", "404", "422", "SYMBOL", "SCHEMA", "REQUEST")):
+        return "REQUEST_REJECTED"
+    return "PROVIDER_ERROR"
+
+
 def snapshot(now, minutes=2, delay_minutes=30, client=None):
     """Return a bounded delayed GC order-flow sample without mutating bot state."""
     minutes = max(1, min(int(minutes), 5))
@@ -170,20 +161,8 @@ def snapshot(now, minutes=2, delay_minutes=30, client=None):
         books = _fetch("mbp-10", start, end, 10000, client)
         base.update(analyze(trades, books))
         base["status"] = "SHADOW_READY" if trades or books else "SHADOW_NO_DATA"
-    except httpx.HTTPStatusError as exc:
-        code = exc.response.status_code
+    except Exception as exc:
         base["status"] = "SHADOW_UNAVAILABLE"
-        base["provider_error"] = (
-            "AUTH_OR_PERMISSION" if code in (401, 403)
-            else "PAYMENT_OR_ENTITLEMENT" if code == 402
-            else "REQUEST_REJECTED" if 400 <= code < 500
-            else "PROVIDER_ERROR"
-        )
-    except (httpx.TimeoutException, httpx.TransportError):
-        base["status"] = "SHADOW_UNAVAILABLE"
-        base["provider_error"] = "NETWORK_OR_TIMEOUT"
-    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
-        base["status"] = "SHADOW_UNAVAILABLE"
-        base["provider_error"] = "INVALID_PROVIDER_RESPONSE"
+        base["provider_error"] = _provider_error(exc)
 
     return base
