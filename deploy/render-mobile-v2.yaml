@@ -26,3 +26,5 @@ services:
         value: "3072"
       - key: MOBILE_MIN_FREE_MIB
         value: "256"
+      - key: DATABENTO_API_KEY
+        sync: false
