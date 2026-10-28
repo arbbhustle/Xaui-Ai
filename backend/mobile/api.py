@@ -22,6 +22,7 @@ from ..realdata.adapters import synthetic_payload
 from .runtime import Runtime
 from .collection import MOBILE_XAU_FRESHNESS_SECONDS
 from .push import XauPushNotifier
+from .orderflow_shadow import snapshot as orderflow_shadow_snapshot
 
 
 FIELDS = frozenset('decision_id direction candidate_direction confidence confidence_kind calibrated_confidence raw_score '
@@ -257,6 +258,11 @@ def create_app(
     @app.get('/storage-diagnostics')
     def storage_diagnostics():
         return public(runtime().storage_diagnostics())
+
+    @app.get('/orderflow-shadow')
+    def orderflow_shadow(minutes:int=Query(2,ge=1,le=5)):
+        # On-demand only: no background requests, no score/veto/execution influence.
+        return public(orderflow_shadow_snapshot(clock(), minutes=minutes))
 
     @app.get('/signal')
     def signal():
