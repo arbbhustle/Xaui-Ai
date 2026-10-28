@@ -132,10 +132,11 @@ def _provider_error(exc):
     return "PROVIDER_ERROR"
 
 
-def snapshot(now, minutes=2, delay_minutes=30, client=None):
+def snapshot(now, minutes=2, delay_minutes=1560, client=None):
     """Return a bounded delayed GC order-flow sample without mutating bot state."""
     minutes = max(1, min(int(minutes), 5))
-    delay_minutes = max(15, min(int(delay_minutes), 240))
+    # Historical API is for data older than 24h; keep a two-hour safety margin.
+    delay_minutes = max(1560, min(int(delay_minutes), 10080))
     base = {
         "status": "NOT_CONFIGURED" if not _configured() else "SHADOW_PENDING",
         "role": ROLE,
