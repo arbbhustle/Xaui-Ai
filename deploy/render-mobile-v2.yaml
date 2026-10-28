@@ -17,7 +17,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.8
       - key: MOBILE_DB_PATH
-        value: /var/data/mobile-v3.sqlite3
+        value: /var/data/mobile-v4.sqlite3
       - key: MOBILE_DISK_PATH
         value: /var/data
       - key: MOBILE_COLLECTION_ENABLED
