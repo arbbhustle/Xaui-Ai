@@ -3,7 +3,9 @@
 Historical/delayed data only. This module is deliberately on-demand and read-only:
 it never changes Champion/Research scoring, vetoes, entries, or execution state.
 """
+from copy import deepcopy
 from datetime import timedelta
+from threading import Lock
 import os
 
 import databento as db
@@ -11,6 +13,9 @@ import databento as db
 DATASET = "GLBX.MDP3"
 SYMBOL = "GC.v.0"
 ROLE = "SHADOW_ONLY_NO_SIGNAL_INFLUENCE"
+CACHE_SECONDS = 300
+_CACHE = {"stored_at": None, "key": None, "value": None}
+_CACHE_LOCK = Lock()
 
 
 def _configured():
@@ -38,8 +43,6 @@ def _fetch(schema, start, end, limit, client=None):
         end=end,
         limit=int(limit),
     )
-    # Databento timeseries.get_range returns a DBNStore. Convert only this
-    # bounded sample after download; raw provider payloads are never persisted.
     frame = store.to_df()
     if frame is None or frame.empty:
         return []
@@ -87,7 +90,23 @@ def analyze(trades, books):
             latest_bid, latest_ask = bid, ask
 
     book_imbalance = sum(imbalances) / len(imbalances) if imbalances else 0.0
-    pressure_score = 0.65 * delta_ratio + 0.35 * book_imbalance
+
+    # Keep the original weighting when both feeds are present. If MBP-10 is
+    # temporarily unavailable, expose a trades-only pressure rather than
+    # failing the entire diagnostic endpoint.
+    if trades and books:
+        pressure_score = 0.65 * delta_ratio + 0.35 * book_imbalance
+        pressure_basis = "TRADES_PLUS_MBP10"
+    elif trades:
+        pressure_score = delta_ratio
+        pressure_basis = "TRADES_ONLY_PARTIAL"
+    elif books:
+        pressure_score = book_imbalance
+        pressure_basis = "MBP10_ONLY_PARTIAL"
+    else:
+        pressure_score = 0.0
+        pressure_basis = "NO_FEED_DATA"
+
     pressure = "BULLISH" if pressure_score >= 0.12 else "BEARISH" if pressure_score <= -0.12 else "NEUTRAL"
 
     return {
@@ -112,24 +131,45 @@ def analyze(trades, books):
         "pressure": {
             "label": pressure,
             "score": round(pressure_score, 6),
+            "basis": pressure_basis,
             "validated_signal": False,
         },
     }
 
 
 def _provider_error(exc):
-    # Never expose provider exception bodies: they may contain request/account
-    # details. Return only a coarse diagnostic category.
     value = (type(exc).__name__ + " " + str(exc)).upper()
     if any(marker in value for marker in ("401", "403", "AUTH", "PERMISSION", "UNAUTHORIZED", "FORBIDDEN")):
         return "AUTH_OR_PERMISSION"
     if any(marker in value for marker in ("402", "PAYMENT", "ENTITLE", "CREDIT", "BILLING")):
         return "PAYMENT_OR_ENTITLEMENT"
+    if any(marker in value for marker in ("429", "RATE", "TOO MANY")):
+        return "RATE_LIMITED"
     if any(marker in value for marker in ("TIMEOUT", "CONNECT", "NETWORK", "DNS")):
         return "NETWORK_OR_TIMEOUT"
     if any(marker in value for marker in ("400", "404", "422", "SYMBOL", "SCHEMA", "REQUEST")):
         return "REQUEST_REJECTED"
     return "PROVIDER_ERROR"
+
+
+def _cached(now, cache_key):
+    with _CACHE_LOCK:
+        stored_at = _CACHE["stored_at"]
+        if _CACHE["key"] != cache_key or stored_at is None or _CACHE["value"] is None:
+            return None
+        age = (now - stored_at).total_seconds()
+        if age < 0 or age >= CACHE_SECONDS:
+            return None
+        value = deepcopy(_CACHE["value"])
+    value["cache"] = {"hit": True, "age_seconds": round(age, 3), "ttl_seconds": CACHE_SECONDS}
+    return value
+
+
+def _store_cache(now, cache_key, value):
+    with _CACHE_LOCK:
+        _CACHE["stored_at"] = now
+        _CACHE["key"] = cache_key
+        _CACHE["value"] = deepcopy(value)
 
 
 def snapshot(now, minutes=2, delay_minutes=1560, client=None):
@@ -153,17 +193,41 @@ def snapshot(now, minutes=2, delay_minutes=1560, client=None):
     if not _configured():
         return base
 
+    cache_key = (minutes, delay_minutes)
+    if client is None:
+        cached = _cached(now, cache_key)
+        if cached is not None:
+            return cached
+
     end = now - timedelta(minutes=delay_minutes)
     start = end - timedelta(minutes=minutes)
     base["window"] = {"start": start.isoformat(), "end": end.isoformat()}
 
+    feeds = {}
     try:
         trades = _fetch("trades", start, end, 10000, client)
-        books = _fetch("mbp-10", start, end, 10000, client)
-        base.update(analyze(trades, books))
-        base["status"] = "SHADOW_READY" if trades or books else "SHADOW_NO_DATA"
+        feeds["trades"] = {"status": "READY", "records": len(trades)}
     except Exception as exc:
-        base["status"] = "SHADOW_UNAVAILABLE"
-        base["provider_error"] = _provider_error(exc)
+        trades = []
+        feeds["trades"] = {"status": "UNAVAILABLE", "error": _provider_error(exc)}
 
+    try:
+        books = _fetch("mbp-10", start, end, 10000, client)
+        feeds["mbp10"] = {"status": "READY", "records": len(books)}
+    except Exception as exc:
+        books = []
+        feeds["mbp10"] = {"status": "UNAVAILABLE", "error": _provider_error(exc)}
+
+    base["feeds"] = feeds
+    base.update(analyze(trades, books))
+    if trades and books:
+        base["status"] = "SHADOW_READY"
+    elif trades or books:
+        base["status"] = "SHADOW_PARTIAL"
+    else:
+        base["status"] = "SHADOW_UNAVAILABLE"
+
+    base["cache"] = {"hit": False, "age_seconds": 0.0, "ttl_seconds": CACHE_SECONDS}
+    if client is None and base["status"] in ("SHADOW_READY", "SHADOW_PARTIAL"):
+        _store_cache(now, cache_key, base)
     return base
